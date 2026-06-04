@@ -33,6 +33,8 @@ class Signal:
 
 
 def _lot_size(risk_usd: float) -> float:
+    if config.FIXED_LOT is not None:
+        return config.FIXED_LOT
     risk_per_lot = config.SL_POINTS * 100
     lot = risk_usd / risk_per_lot
     lot = round(round(lot / 0.01) * 0.01, 2)

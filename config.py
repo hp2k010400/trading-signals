@@ -16,7 +16,8 @@ TREND_TF   = "H1"
 
 # ── Risk ──────────────────────────────────────────────────────────────────────
 ACCOUNT_BALANCE     = float(os.environ.get("ACCOUNT_BALANCE", "10000"))
-RISK_PER_ENTRY_PCT  = 0.5     # 0.5% per entry — up to 3 entries = 1.5% max
+RISK_PER_ENTRY_PCT  = 0.5     # used only if FIXED_LOT is None
+FIXED_LOT           = 0.1     # set to None to use RISK_PER_ENTRY_PCT calculation
 MIN_LOT             = 0.01
 MAX_LOT             = 5.0
 
