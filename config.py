@@ -44,5 +44,5 @@ NEWS_PAUSE_MINUTES = 30
 NEWS_CURRENCIES    = ["USD", "XAU"]
 
 # ── Engine ────────────────────────────────────────────────────────────────────
-POLL_INTERVAL_SECONDS = 900
+POLL_INTERVAL_SECONDS = 300   # 5 minutes — fast enough to catch pyramid entries
 CANDLES_NEEDED        = 200
