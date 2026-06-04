@@ -25,6 +25,9 @@ def send_signal(sig: Signal):
     else:
         header = f"<b>{direction} — {sig.symbol}  [DCA Entry {sig.entry_num}/3]</b>"
 
+    loss_usd  = round(sig.lots * config.SL_POINTS * 100, 0)
+    win_usd   = round(sig.lots * sig.tp_points * 100, 0)
+
     msg = (
         f"{header}\n"
         f"{'━' * 28}\n"
@@ -32,7 +35,8 @@ def send_signal(sig: Signal):
         f"TP:     <b>{sig.tp:.2f}</b>   (+{sig.tp_points:.1f} pts)\n"
         f"SL:     <b>{sig.sl:.2f}</b>   (-{sig.sl_points} pts)\n"
         f"{'━' * 28}\n"
-        f"Lots:   <b>{sig.lots}</b>   (0.5% risk)\n"
+        f"Lots:   <b>{sig.lots}</b>\n"
+        f"Win:    ~${win_usd:.0f}  |  Loss: ~${loss_usd:.0f}\n"
         f"R:R     1:{sig.rr}\n"
         f"{'━' * 28}\n"
         f"Signal: {sig.pattern}\n"
