@@ -19,35 +19,38 @@ def _send(text: str):
 
 def send_signal(sig: Signal):
     direction = "🟢 BUY" if sig.action == "BUY" else "🔴 SELL"
-    pips_sl   = abs(sig.entry - sig.sl)
-    pips_tp1  = abs(sig.tp1  - sig.entry)
-    pips_tp2  = abs(sig.tp2  - sig.entry)
+
+    if sig.entry_num == 1:
+        header = f"<b>{direction} — {sig.symbol}</b>"
+    else:
+        header = f"<b>{direction} — {sig.symbol}  [DCA Entry {sig.entry_num}/3]</b>"
 
     msg = (
-        f"<b>{direction} — {sig.symbol}</b>\n"
+        f"{header}\n"
         f"{'━' * 28}\n"
-        f"Entry:   <b>{sig.entry:.2f}</b>\n"
-        f"TP1:     <b>{sig.tp1:.2f}</b>  (+{pips_tp1:.2f})\n"
-        f"TP2:     <b>{sig.tp2:.2f}</b>  (+{pips_tp2:.2f})\n"
-        f"SL:      <b>{sig.sl:.2f}</b>   (-{pips_sl:.2f})\n"
+        f"Entry:  <b>{sig.entry:.2f}</b>\n"
+        f"TP:     <b>{sig.tp:.2f}</b>   (+{sig.tp_points:.1f} pts)\n"
+        f"SL:     <b>{sig.sl:.2f}</b>   (-{sig.sl_points} pts)\n"
         f"{'━' * 28}\n"
-        f"Lots:    <b>{sig.lots}</b>  (1% risk)\n"
-        f"R:R      TP1 1:{sig.rr1}  |  TP2 1:{sig.rr2}\n"
+        f"Lots:   <b>{sig.lots}</b>   (0.5% risk)\n"
+        f"R:R     1:{sig.rr}\n"
         f"{'━' * 28}\n"
-        f"Pattern: {sig.pattern}\n"
-        f"Trend:   {sig.trend} (M15 + H1)\n"
-        f"ATR:     {sig.atr}\n"
-        f"News:    Clear ✅"
+        f"Signal: {sig.pattern}\n"
+        f"News:   Clear ✅"
     )
     _send(msg)
 
 
+def send_tp_hit(symbol: str, tp: float):
+    _send(f"✅ <b>TP HIT — {symbol}</b>\nTarget {tp:.2f} reached — close all entries!")
+
+
 def send_news_warning(msg: str):
-    _send(f"⚠️ <b>News Pause Active</b>\n{msg}\nSignals paused ±{config.NEWS_PAUSE_MINUTES} min")
+    _send(f"⚠️ <b>News Pause</b>\n{msg}\nSignals paused ±{config.NEWS_PAUSE_MINUTES} min")
 
 
 def send_risk_warning(msg: str):
-    _send(f"🚨 <b>FTMO Risk Limit</b>\n{msg}\nTrading paused for today.")
+    _send(f"🚨 <b>FTMO Risk Limit</b>\n{msg}\nTrading paused.")
 
 
 def send_startup():
@@ -55,6 +58,6 @@ def send_startup():
     _send(
         f"✅ <b>Signal Bot Started</b>\n"
         f"Watching: {symbols}\n"
-        f"Timeframe: {config.PRIMARY_TF} (filter: {config.TREND_TF})\n"
-        f"Risk: {config.RISK_PER_TRADE_PCT}% per trade | ${config.ACCOUNT_BALANCE:,} account"
+        f"Strategy: S/R targeting | Fixed 15pt SL | Up to 3 DCA entries\n"
+        f"Risk: {config.RISK_PER_ENTRY_PCT}% per entry | ${config.ACCOUNT_BALANCE:,.0f} account"
     )

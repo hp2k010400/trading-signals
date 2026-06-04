@@ -1,11 +1,11 @@
 """
-Core signal logic. A signal requires ALL of the following:
-  - Trend alignment  : EMA fast/slow agree on direction (primary TF)
-  - Trend filter     : H1 EMA agrees (higher timeframe confirmation)
-  - Momentum         : RSI not in overbought/oversold territory
-  - MACD cross       : histogram confirms direction (or candle pattern replaces this)
-  - Price action     : bullish/bearish candle pattern on last closed candle
-  - News clear       : no high-impact event within pause window
+Signal engine — rebuilt to match the Gold Signals group strategy:
+
+  1. Identify a key S/R level as the TP target
+  2. Enter when trend + momentum + candle pattern confirm direction
+  3. Allow up to 3 DCA entries toward the same target
+  4. Fixed 15-point SL on every entry
+  5. TP is the S/R level minus a small buffer
 """
 from dataclasses import dataclass
 import config
@@ -14,23 +14,29 @@ import price_action as pa
 import news_filter
 import risk_manager
 import data_client
+import targets as tgt
 
 
 @dataclass
 class Signal:
-    symbol:   str
-    action:   str
-    entry:    float
-    sl:       float
-    tp1:      float
-    tp2:      float
-    lots:     float
-    atr:      float
-    rr1:      float
-    rr2:      float
-    pattern:  str
-    trend:    str
-    h1_trend: str
+    symbol:      str
+    action:      str          # "BUY" | "SELL"
+    entry:       float
+    sl:          float
+    tp:          float
+    lots:        float
+    rr:          float
+    pattern:     str
+    entry_num:   int          # 1 = first entry, 2/3 = DCA
+    tp_points:   float
+    sl_points:   float = config.SL_POINTS
+
+
+def _lot_size(risk_usd: float) -> float:
+    risk_per_lot = config.SL_POINTS * 100
+    lot = risk_usd / risk_per_lot
+    lot = round(round(lot / 0.01) * 0.01, 2)
+    return max(config.MIN_LOT, min(config.MAX_LOT, lot))
 
 
 def _rr(entry, sl, tp) -> float:
@@ -40,74 +46,116 @@ def _rr(entry, sl, tp) -> float:
 
 
 def evaluate(symbol: str) -> Signal | None:
+    # ── News & risk gates ─────────────────────────────────────────────────────
     blocked, news_msg = news_filter.is_news_window()
     if blocked:
-        print(f"  [{symbol}] News window — {news_msg}")
+        print(f"  [{symbol}] News: {news_msg}")
         return None
 
     allowed, risk_msg = risk_manager.is_trading_allowed()
     if not allowed:
-        print(f"  [{symbol}] Risk blocked — {risk_msg}")
+        print(f"  [{symbol}] Risk: {risk_msg}")
         return None
 
+    # ── Fetch data ────────────────────────────────────────────────────────────
     try:
-        df_primary = ind.enrich(data_client.get_bars(symbol, config.PRIMARY_TF))
-        df_trend   = ind.enrich(data_client.get_bars(symbol, config.TREND_TF))
+        df = ind.enrich(data_client.get_bars(symbol, config.PRIMARY_TF))
+        tick = data_client.get_tick(symbol)
     except Exception as e:
         print(f"  [{symbol}] Data error: {e}")
         return None
 
-    if len(df_primary) < 50 or len(df_trend) < 50:
+    if len(df) < 50:
         return None
 
-    trend    = ind.trend_direction(df_primary)
-    h1_trend = ind.trend_direction(df_trend)
-    rsi      = ind.rsi_value(df_primary)
-    atr      = ind.atr_value(df_primary)
+    price = tick["ask"]   # use ask as reference; SL/TP calc same either side
 
-    if trend == "flat" or h1_trend == "flat" or trend != h1_trend:
+    # ── Check if an active target needs a DCA entry ───────────────────────────
+    active = tgt.get(symbol)
+
+    if active:
+        # Check if TP has been hit
+        if active.tp_hit(price):
+            print(f"  [{symbol}] TP hit at {active.tp:.2f} — clearing target")
+            tgt.clear(symbol)
+            return None
+
+        # Check if trend is still valid for existing target
+        trend = ind.trend_direction(df)
+        active_trend = "bull" if active.direction == "bull" else "bear"
+        if trend != active.direction:
+            print(f"  [{symbol}] Trend reversed — clearing target")
+            tgt.clear(symbol)
+            return None
+
+        # Fire a DCA entry if price has pulled back
+        if active.needs_dca(price) and not active.is_full():
+            entry = price
+            if active.direction == "bull":
+                sl = entry - config.SL_POINTS
+                tp = active.tp
+            else:
+                sl = entry + config.SL_POINTS
+                tp = active.tp
+
+            tgt.add_dca_entry(symbol, entry)
+            lots = _lot_size(risk_manager.risk_amount_usd())
+
+            return Signal(
+                symbol    = symbol,
+                action    = "BUY" if active.direction == "bull" else "SELL",
+                entry     = round(entry, 2),
+                sl        = round(sl, 2),
+                tp        = round(tp, 2),
+                lots      = lots,
+                rr        = _rr(entry, sl, tp),
+                pattern   = "DCA Entry",
+                entry_num = active.entry_count,
+                tp_points = round(abs(tp - entry), 2),
+            )
         return None
 
-    pattern = pa.bullish_pattern(df_primary) if trend == "bull" else pa.bearish_pattern(df_primary)
-    macd_ok = ind.macd_bullish(df_primary) if trend == "bull" else ind.macd_bearish(df_primary)
+    # ── No active target — look for a fresh signal ────────────────────────────
+    trend = ind.trend_direction(df)
+    rsi   = ind.rsi_value(df)
 
-    if pattern is None and not macd_ok:
+    if trend == "flat":
         return None
-
-    if pattern is None:
-        pattern = "MACD Cross"
-
     if trend == "bull" and rsi > config.RSI_OB:
         return None
     if trend == "bear" and rsi < config.RSI_OS:
         return None
 
-    tick  = data_client.get_tick(symbol)
-    entry = tick["ask"] if trend == "bull" else tick["bid"]
+    pattern = pa.bullish_pattern(df) if trend == "bull" else pa.bearish_pattern(df)
+    macd_ok = ind.macd_bullish(df)   if trend == "bull" else ind.macd_bearish(df)
 
-    if trend == "bull":
-        sl  = entry - atr * config.ATR_SL_MULT
-        tp1 = entry + atr * config.ATR_TP1_MULT
-        tp2 = entry + atr * config.ATR_TP2_MULT
-    else:
-        sl  = entry + atr * config.ATR_SL_MULT
-        tp1 = entry - atr * config.ATR_TP1_MULT
-        tp2 = entry - atr * config.ATR_TP2_MULT
+    if pattern is None and not macd_ok:
+        return None
+    if pattern is None:
+        pattern = "MACD Cross"
 
-    lots = data_client.calc_lot_size(symbol, abs(entry - sl), risk_manager.risk_amount_usd())
+    # ── Find S/R TP target ────────────────────────────────────────────────────
+    levels = pa.all_levels(df)
+    tp = pa.find_tp(price, trend, levels)
+    if tp is None:
+        return None
 
-    return Signal(
-        symbol   = symbol,
-        action   = "BUY" if trend == "bull" else "SELL",
-        entry    = round(entry, 2),
-        sl       = round(sl, 2),
-        tp1      = round(tp1, 2),
-        tp2      = round(tp2, 2),
-        lots     = lots,
-        atr      = round(atr, 2),
-        rr1      = _rr(entry, sl, tp1),
-        rr2      = _rr(entry, sl, tp2),
-        pattern  = pattern,
-        trend    = "Bullish" if trend == "bull" else "Bearish",
-        h1_trend = "Bullish" if h1_trend == "bull" else "Bearish",
+    entry = price
+    sl    = (entry - config.SL_POINTS) if trend == "bull" else (entry + config.SL_POINTS)
+
+    lots = _lot_size(risk_manager.risk_amount_usd())
+    sig  = Signal(
+        symbol    = symbol,
+        action    = "BUY" if trend == "bull" else "SELL",
+        entry     = round(entry, 2),
+        sl        = round(sl, 2),
+        tp        = round(tp, 2),
+        lots      = lots,
+        rr        = _rr(entry, sl, tp),
+        pattern   = pattern,
+        entry_num = 1,
+        tp_points = round(abs(tp - entry), 2),
     )
+
+    tgt.set_target(symbol, trend, tp, entry)
+    return sig

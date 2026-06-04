@@ -1,6 +1,3 @@
-"""
-Entry point. Runs on Railway as a background worker.
-"""
 import time
 import traceback
 from datetime import datetime, timezone
@@ -9,17 +6,25 @@ import signal_engine
 import telegram_bot
 import news_filter
 import risk_manager
+import targets as tgt
+import data_client
 import config
 
-_last_signal: dict[str, str] = {}
 
-
-def _should_send(symbol: str, action: str) -> bool:
-    prev = _last_signal.get(symbol)
-    if prev == action:
-        return False
-    _last_signal[symbol] = action
-    return True
+def _check_tp_hits():
+    """Notify if any active target has been hit since last poll."""
+    for symbol in list(config.SYMBOLS):
+        active = tgt.get(symbol)
+        if active is None:
+            continue
+        try:
+            tick = data_client.get_tick(symbol)
+            price = tick["ask"]
+            if active.tp_hit(price):
+                telegram_bot.send_tp_hit(symbol, active.tp)
+                tgt.clear(symbol)
+        except Exception:
+            pass
 
 
 def run():
@@ -43,15 +48,15 @@ def run():
                 time.sleep(60)
                 continue
 
+            _check_tp_hits()
+
             for symbol in config.SYMBOLS:
                 print(f"[{now}] Checking {symbol}...")
                 sig = signal_engine.evaluate(symbol)
-                if sig and _should_send(symbol, sig.action):
-                    print(f"  >> SIGNAL: {sig.action} {symbol} | Entry {sig.entry} | Lots {sig.lots}")
+                if sig:
+                    label = f"Entry {sig.entry_num}" if sig.entry_num > 1 else "Signal"
+                    print(f"  >> {label}: {sig.action} {symbol} | Entry {sig.entry:.2f} | TP {sig.tp:.2f} | Lots {sig.lots}")
                     telegram_bot.send_signal(sig)
-                else:
-                    if sig is None:
-                        _last_signal[symbol] = ""
 
         except KeyboardInterrupt:
             print("\n[Bot] Stopped.")

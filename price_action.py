@@ -1,161 +1,128 @@
 import pandas as pd
 import numpy as np
+import config
 
 
-# ── Support / Resistance ──────────────────────────────────────────────────────
+# ── Support / Resistance levels ───────────────────────────────────────────────
 
-def pivot_levels(df: pd.DataFrame, lookback: int = 50) -> dict:
-    """
-    Classic pivot point levels from the most recent completed session bar.
-    Returns dict with keys: P, R1, R2, S1, S2.
-    """
-    window = df.iloc[-lookback - 1 : -1]
-    H = window["high"].max()
-    L = window["low"].min()
-    C = float(df["close"].iloc[-2])
-    P  = (H + L + C) / 3
-    R1 = 2 * P - L
-    S1 = 2 * P - H
-    R2 = P + (H - L)
-    S2 = P - (H - L)
-    return {"P": P, "R1": R1, "R2": R2, "S1": S1, "S2": S2}
-
-
-def near_level(price: float, levels: dict, tolerance_pct: float = 0.0015) -> str | None:
-    """
-    Returns the level name if price is within tolerance of a pivot level,
-    else None.  tolerance_pct = 0.15% of price by default.
-    """
-    tol = price * tolerance_pct
-    for name, lvl in levels.items():
-        if abs(price - lvl) <= tol:
-            return name
-    return None
+def daily_pivots(df: pd.DataFrame) -> dict:
+    """Classic pivot points from the previous completed day's candle."""
+    daily = df.resample("D").agg({"high": "max", "low": "min", "close": "last"}).dropna()
+    if len(daily) < 2:
+        return {}
+    prev = daily.iloc[-2]
+    H, L, C = float(prev["high"]), float(prev["low"]), float(prev["close"])
+    PP = (H + L + C) / 3
+    return {
+        "PP": PP,
+        "R1": 2 * PP - L,
+        "R2": PP + (H - L),
+        "R3": H + 2 * (PP - L),
+        "S1": 2 * PP - H,
+        "S2": PP - (H - L),
+        "S3": L - 2 * (H - PP),
+    }
 
 
-def swing_levels(df: pd.DataFrame, window: int = 20) -> tuple[list, list]:
-    """Return (swing_highs, swing_lows) as lists of prices from recent bars."""
+def round_number_levels(price: float, count: int = 6) -> list[float]:
+    """Return the nearest round-number levels above and below price."""
+    step = config.ROUND_NUMBER_STEP
+    base = round(price / step) * step
+    levels = [base + step * i for i in range(-count, count + 1)]
+    return sorted(set(levels))
+
+
+def swing_levels(df: pd.DataFrame, window: int = 10) -> tuple[list, list]:
+    """Swing highs and lows from recent price action."""
     highs, lows = [], []
-    closes = df["close"].values
-    for i in range(window, len(closes) - window):
-        if closes[i] == max(closes[i - window : i + window]):
-            highs.append(closes[i])
-        if closes[i] == min(closes[i - window : i + window]):
-            lows.append(closes[i])
-    return highs, lows
+    h = df["high"].values
+    l = df["low"].values
+    for i in range(window, len(h) - window):
+        if h[i] == max(h[i - window: i + window]):
+            highs.append(float(h[i]))
+        if l[i] == min(l[i - window: i + window]):
+            lows.append(float(l[i]))
+    return highs[-5:], lows[-5:]   # keep only 5 most recent
 
 
-# ── Candlestick Patterns ──────────────────────────────────────────────────────
+def all_levels(df: pd.DataFrame) -> list[float]:
+    """Combine pivot points, round numbers and swing levels into one sorted list."""
+    price = float(df["close"].iloc[-2])
+    levels = set()
+
+    pivots = daily_pivots(df)
+    levels.update(pivots.values())
+
+    levels.update(round_number_levels(price))
+
+    highs, lows = swing_levels(df)
+    levels.update(highs)
+    levels.update(lows)
+
+    return sorted(levels)
+
+
+def find_tp(current_price: float, direction: str, levels: list[float]) -> float | None:
+    """
+    Find the nearest S/R level in the trade direction that is at least
+    SL_POINTS + TP_BUFFER away (so R:R is always positive).
+    Returns the level minus TP_BUFFER (to close just before resistance hits).
+    """
+    min_dist = config.SL_POINTS + config.TP_BUFFER
+    if direction == "bull":
+        candidates = [l for l in levels if l > current_price + min_dist]
+        return (min(candidates) - config.TP_BUFFER) if candidates else None
+    else:
+        candidates = [l for l in levels if l < current_price - min_dist]
+        return (max(candidates) + config.TP_BUFFER) if candidates else None
+
+
+# ── Candlestick patterns ──────────────────────────────────────────────────────
 
 def _body(row) -> float:
     return abs(row["close"] - row["open"])
 
-
 def _range(row) -> float:
     return row["high"] - row["low"]
 
+def _lower_wick(row) -> float:
+    return min(row["open"], row["close"]) - row["low"]
 
 def _upper_wick(row) -> float:
     return row["high"] - max(row["open"], row["close"])
 
 
-def _lower_wick(row) -> float:
-    return min(row["open"], row["close"]) - row["low"]
-
-
 def is_bullish_engulfing(df: pd.DataFrame) -> bool:
-    prev = df.iloc[-3]
-    curr = df.iloc[-2]
-    return (
-        prev["close"] < prev["open"]           # prev bearish
-        and curr["close"] > curr["open"]        # curr bullish
-        and curr["open"]  < prev["close"]       # opens below prev close
-        and curr["close"] > prev["open"]        # closes above prev open
-    )
+    prev, curr = df.iloc[-3], df.iloc[-2]
+    return (prev["close"] < prev["open"] and curr["close"] > curr["open"]
+            and curr["open"] < prev["close"] and curr["close"] > prev["open"])
 
 
 def is_bearish_engulfing(df: pd.DataFrame) -> bool:
-    prev = df.iloc[-3]
-    curr = df.iloc[-2]
-    return (
-        prev["close"] > prev["open"]
-        and curr["close"] < curr["open"]
-        and curr["open"]  > prev["close"]
-        and curr["close"] < prev["open"]
-    )
+    prev, curr = df.iloc[-3], df.iloc[-2]
+    return (prev["close"] > prev["open"] and curr["close"] < curr["open"]
+            and curr["open"] > prev["close"] and curr["close"] < prev["open"])
 
 
 def is_bullish_pin_bar(df: pd.DataFrame) -> bool:
-    """Long lower wick, small body near top — rejection of lower prices."""
     row = df.iloc[-2]
-    body  = _body(row)
-    rng   = _range(row)
-    lower = _lower_wick(row)
-    upper = _upper_wick(row)
-    if rng == 0:
-        return False
-    return (
-        lower >= rng * 0.6
-        and body <= rng * 0.3
-        and upper <= rng * 0.15
-    )
+    rng = _range(row)
+    return rng > 0 and _lower_wick(row) >= rng * 0.6 and _body(row) <= rng * 0.3
 
 
 def is_bearish_pin_bar(df: pd.DataFrame) -> bool:
-    """Long upper wick, small body near bottom — rejection of higher prices."""
-    row = df.iloc[-2]
-    body  = _body(row)
-    rng   = _range(row)
-    upper = _upper_wick(row)
-    lower = _lower_wick(row)
-    if rng == 0:
-        return False
-    return (
-        upper >= rng * 0.6
-        and body <= rng * 0.3
-        and lower <= rng * 0.15
-    )
-
-
-def is_doji(df: pd.DataFrame) -> bool:
     row = df.iloc[-2]
     rng = _range(row)
-    return rng > 0 and _body(row) / rng < 0.1
+    return rng > 0 and _upper_wick(row) >= rng * 0.6 and _body(row) <= rng * 0.3
 
 
 def bullish_pattern(df: pd.DataFrame) -> str | None:
-    if is_bullish_engulfing(df):
-        return "Bullish Engulfing"
-    if is_bullish_pin_bar(df):
-        return "Bullish Pin Bar"
+    if is_bullish_engulfing(df): return "Bullish Engulfing"
+    if is_bullish_pin_bar(df):   return "Bullish Pin Bar"
     return None
 
 
 def bearish_pattern(df: pd.DataFrame) -> str | None:
-    if is_bearish_engulfing(df):
-        return "Bearish Engulfing"
-    if is_bearish_pin_bar(df):
-        return "Bearish Pin Bar"
+    if is_bearish_engulfing(df): return "Bearish Engulfing"
+    if is_bearish_pin_bar(df):   return "Bearish Pin Bar"
     return None
-
-
-# ── Trend structure ───────────────────────────────────────────────────────────
-
-def higher_highs_lows(df: pd.DataFrame, n: int = 3) -> bool:
-    """True if last n swing highs and lows are ascending."""
-    highs, lows = swing_levels(df, window=5)
-    return len(highs) >= n and len(lows) >= n and all(
-        highs[-i] > highs[-i - 1] for i in range(1, n)
-    ) and all(
-        lows[-i] > lows[-i - 1] for i in range(1, n)
-    )
-
-
-def lower_highs_lows(df: pd.DataFrame, n: int = 3) -> bool:
-    """True if last n swing highs and lows are descending."""
-    highs, lows = swing_levels(df, window=5)
-    return len(highs) >= n and len(lows) >= n and all(
-        highs[-i] < highs[-i - 1] for i in range(1, n)
-    ) and all(
-        lows[-i] < lows[-i - 1] for i in range(1, n)
-    )
