@@ -1,77 +1,71 @@
 """
-Replaces mt5_client.py. Pulls live XAUUSD data from Twelve Data REST API.
-Both XAUUSD.s and XAUUSD.QTR map to XAU/USD spot (futures not on free tier).
+Data client using yfinance — free, no API key, real-time gold prices.
+Gold spot: GC=F (futures, trades like spot for our purposes)
 """
-import requests
+import yfinance as yf
 import pandas as pd
 import config
 
-_BASE = "https://api.twelvedata.com"
-
 _SYMBOL_MAP = {
-    "XAUUSD.s":   "XAU/USD",
-    "XAUUSD.QTR": "XAU/USD",
+    "XAUUSD.s":   "GC=F",
+    "XAUUSD.QTR": "GC=F",
+    "XAUUSD":     "GC=F",
 }
 
 _TF_MAP = {
-    "M5":  "5min",
-    "M15": "15min",
-    "M30": "30min",
-    "H1":  "1h",
+    "M5":  "5m",
+    "M15": "15m",
+    "M30": "30m",
+    "H1":  "60m",
     "H4":  "4h",
-    "D1":  "1day",
+    "D1":  "1d",
+}
+
+# yfinance period needed per interval to get enough bars
+_PERIOD_MAP = {
+    "5m":  "5d",
+    "15m": "60d",
+    "30m": "60d",
+    "60m": "60d",
+    "4h":  "60d",
+    "1d":  "1y",
 }
 
 
 def get_bars(symbol: str, timeframe: str, count: int = config.CANDLES_NEEDED) -> pd.DataFrame:
-    td_symbol = _SYMBOL_MAP.get(symbol, symbol)
-    tf = _TF_MAP.get(timeframe, timeframe)
+    ticker = _SYMBOL_MAP.get(symbol, "GC=F")
+    tf     = _TF_MAP.get(timeframe, "15m")
+    period = _PERIOD_MAP.get(tf, "60d")
 
-    resp = requests.get(f"{_BASE}/time_series", params={
-        "symbol":     td_symbol,
-        "interval":   tf,
-        "outputsize": count,
-        "apikey":     config.TWELVE_DATA_KEY,
-        "format":     "JSON",
-    }, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
+    df = yf.download(ticker, period=period, interval=tf, progress=False, auto_adjust=True)
 
-    if data.get("status") == "error":
-        raise RuntimeError(f"Twelve Data: {data.get('message')}")
+    if df is None or len(df) == 0:
+        raise RuntimeError(f"No data from yfinance for {symbol} {timeframe}")
 
-    values = data.get("values", [])
-    if not values:
-        raise RuntimeError(f"No data for {symbol} {timeframe}")
+    df.columns = [c.lower() if isinstance(c, str) else c[0].lower() for c in df.columns]
+    df = df[["open", "high", "low", "close"]].dropna()
+    df.index = pd.to_datetime(df.index)
 
-    df = pd.DataFrame(values)
-    df = df.rename(columns={"datetime": "time"})
-    df["time"] = pd.to_datetime(df["time"])
-    df = df.set_index("time")
-    for col in ["open", "high", "low", "close"]:
-        df[col] = pd.to_numeric(df[col])
-
-    return df.iloc[::-1]   # Twelve Data returns newest-first; reverse to chronological
+    return df.tail(count)
 
 
 def get_tick(symbol: str) -> dict:
-    td_symbol = _SYMBOL_MAP.get(symbol, symbol)
-    resp = requests.get(f"{_BASE}/price", params={
-        "symbol": td_symbol,
-        "apikey": config.TWELVE_DATA_KEY,
-    }, timeout=10)
-    resp.raise_for_status()
-    price = float(resp.json()["price"])
-    return {"ask": price, "bid": price}
+    ticker = _SYMBOL_MAP.get(symbol, "GC=F")
+    t = yf.Ticker(ticker)
+    price = t.fast_info.get("last_price") or t.fast_info.get("lastPrice")
+    if price is None:
+        # fallback: use last close from recent data
+        df = yf.download(ticker, period="1d", interval="1m", progress=False, auto_adjust=True)
+        price = float(df["Close"].iloc[-1])
+    return {"ask": float(price), "bid": float(price)}
 
 
 def calc_lot_size(symbol: str, sl_points: float, risk_usd: float) -> float:
-    """
-    XAUUSD: 1 standard lot = 100 oz.
-    A $1 price move = $100 per lot, so risk_per_lot = sl_points * 100.
-    """
+    if config.FIXED_LOT is not None:
+        return config.FIXED_LOT
     if sl_points <= 0:
         return config.MIN_LOT
     risk_per_lot = sl_points * 100
-    lot = round(risk_usd / risk_per_lot, 2)
+    lot = risk_usd / risk_per_lot
+    lot = round(round(lot / 0.01) * 0.01, 2)
     return max(config.MIN_LOT, min(config.MAX_LOT, lot))

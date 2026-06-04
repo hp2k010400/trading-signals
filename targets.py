@@ -32,14 +32,19 @@ class Target:
         return age > config.TARGET_EXPIRY_HOURS * 3600
 
     def needs_dca(self, current_price: float) -> bool:
-        """True if price has pulled back enough for a new DCA entry."""
+        """
+        True if price has moved FURTHER in our direction since last entry.
+        This is pyramiding (adding to winners) not averaging down.
+        For buys:  price moved UP   sep points from last entry
+        For sells: price moved DOWN sep points from last entry
+        """
         if self.is_full() or self.last_entry is None:
             return False
         sep = config.ENTRY_SEPARATION
         if self.direction == "bull":
-            return current_price <= self.last_entry - sep
-        else:
             return current_price >= self.last_entry + sep
+        else:
+            return current_price <= self.last_entry - sep
 
     def tp_hit(self, current_price: float) -> bool:
         if self.direction == "bull":
