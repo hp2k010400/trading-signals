@@ -49,6 +49,10 @@ def send_signal(sig: Signal):
 def send_tp_hit(symbol: str, tp: float):
     _send(f"✅ <b>TP HIT — {symbol}</b>\nTarget {tp:.2f} reached — close all entries!")
 
+def send_sl_hit(symbol: str, sl: float, entry_count: int):
+    entries_txt = f"{entry_count} entr{'y' if entry_count == 1 else 'ies'}"
+    _send(f"🛑 <b>SL HIT — {symbol}</b>\nStop {sl:.2f} triggered — {entries_txt} closed at loss.")
+
 
 def send_news_warning(msg: str):
     _send(f"⚠️ <b>News Pause</b>\n{msg}\nSignals paused ±{config.NEWS_PAUSE_MINUTES} min")

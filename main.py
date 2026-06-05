@@ -11,8 +11,8 @@ import data_client
 import config
 
 
-def _check_tp_hits():
-    """Notify if any active target has been hit since last poll."""
+def _check_exits():
+    """Notify if any active target has hit TP or SL since last poll."""
     for symbol in list(config.SYMBOLS):
         active = tgt.get(symbol)
         if active is None:
@@ -22,6 +22,9 @@ def _check_tp_hits():
             price = tick["ask"]
             if active.tp_hit(price):
                 telegram_bot.send_tp_hit(symbol, active.tp)
+                tgt.clear(symbol)
+            elif active.sl_hit(price):
+                telegram_bot.send_sl_hit(symbol, active.sl_level, active.entry_count)
                 tgt.clear(symbol)
         except Exception:
             pass
@@ -48,7 +51,7 @@ def run():
                 time.sleep(60)
                 continue
 
-            _check_tp_hits()
+            _check_exits()
 
             for symbol in config.SYMBOLS:
                 print(f"[{now}] Checking {symbol}...")
