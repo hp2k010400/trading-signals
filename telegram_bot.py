@@ -64,5 +64,5 @@ def send_startup():
         f"✅ <b>Signal Bot Started</b>\n"
         f"Watching: {symbols}\n"
         f"Strategy: S/R targeting | 7pt SL | EMA 10/20 | Up to 3 pyramid entries\n"
-        f"Risk: {config.RISK_PER_ENTRY_PCT}% per entry | ${config.ACCOUNT_BALANCE:,.0f} account"
+        f"Lots: {config.LOT_TIER_1}-{config.LOT_TIER_3} (by signal strength) | ${config.ACCOUNT_BALANCE:,.0f} account"
     )
