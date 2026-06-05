@@ -37,9 +37,10 @@ TARGET_EXPIRY_HOURS = 24      # drop a target if not hit within 24 hours
 EMA_FAST    = 10
 EMA_SLOW    = 20
 RSI_PERIOD  = 14
-RSI_OB      = 70
-RSI_OS      = 30
-ATR_PERIOD  = 14
+RSI_OB      = 75   # loosened — don't block longs unless truly extreme
+RSI_OS      = 20   # loosened — don't block shorts unless truly extreme
+ATR_PERIOD       = 14
+EARLY_EXIT_POINTS = 5   # suggested early cut if trade moves against you quickly
 
 # ── News filter ───────────────────────────────────────────────────────────────
 NEWS_PAUSE_MINUTES = 30
