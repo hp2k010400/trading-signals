@@ -133,12 +133,13 @@ def evaluate(symbol: str) -> Signal | None:
 
     pattern = pa.bullish_pattern(df) if trend == "bull" else pa.bearish_pattern(df)
     macd_ok = ind.macd_bullish(df)   if trend == "bull" else ind.macd_bearish(df)
+    rsi_ok  = (rsi < 50) if trend == "bear" else (rsi > 50)
 
-    if pattern is None and not macd_ok:
-        print(f"  [{symbol}] No signal — {trend} trend but no candle pattern/MACD | RSI {rsi:.1f}")
+    if pattern is None and not macd_ok and not rsi_ok:
+        print(f"  [{symbol}] No signal — {trend} trend, no confirmation | RSI {rsi:.1f}")
         return None
     if pattern is None:
-        pattern = "MACD Cross"
+        pattern = "MACD Cross" if macd_ok else "RSI Momentum"
 
     # ── Find S/R TP target ────────────────────────────────────────────────────
     levels = pa.all_levels(df)
