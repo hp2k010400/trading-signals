@@ -122,16 +122,20 @@ def evaluate(symbol: str) -> Signal | None:
     rsi   = ind.rsi_value(df)
 
     if trend == "flat":
+        print(f"  [{symbol}] No signal — trend flat | RSI {rsi:.1f} | Price {price:.2f}")
         return None
     if trend == "bull" and rsi > config.RSI_OB:
+        print(f"  [{symbol}] No signal — RSI overbought {rsi:.1f}")
         return None
     if trend == "bear" and rsi < config.RSI_OS:
+        print(f"  [{symbol}] No signal — RSI oversold {rsi:.1f}")
         return None
 
     pattern = pa.bullish_pattern(df) if trend == "bull" else pa.bearish_pattern(df)
     macd_ok = ind.macd_bullish(df)   if trend == "bull" else ind.macd_bearish(df)
 
     if pattern is None and not macd_ok:
+        print(f"  [{symbol}] No signal — {trend} trend but no candle pattern/MACD | RSI {rsi:.1f}")
         return None
     if pattern is None:
         pattern = "MACD Cross"
@@ -140,6 +144,7 @@ def evaluate(symbol: str) -> Signal | None:
     levels = pa.all_levels(df)
     tp = pa.find_tp(price, trend, levels)
     if tp is None:
+        print(f"  [{symbol}] No signal — {trend} {pattern} but no S/R level found | Price {price:.2f}")
         return None
 
     entry = price
