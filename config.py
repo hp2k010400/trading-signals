@@ -12,7 +12,6 @@ SYMBOLS = ["XAUUSD.s", "XAUUSD.QTR"]
 
 # ── Timeframes ────────────────────────────────────────────────────────────────
 PRIMARY_TF = "M15"
-TREND_TF   = "H1"
 
 # ── Risk ──────────────────────────────────────────────────────────────────────
 ACCOUNT_BALANCE     = float(os.environ.get("ACCOUNT_BALANCE", "10000"))
@@ -35,8 +34,8 @@ ENTRY_SEPARATION    = 5       # min points of pullback before adding next entry
 TARGET_EXPIRY_HOURS = 24      # drop a target if not hit within 24 hours
 
 # ── Indicators ────────────────────────────────────────────────────────────────
-EMA_FAST    = 20
-EMA_SLOW    = 50
+EMA_FAST    = 10
+EMA_SLOW    = 20
 RSI_PERIOD  = 14
 RSI_OB      = 70
 RSI_OS      = 30
