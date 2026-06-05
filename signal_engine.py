@@ -19,26 +19,33 @@ import targets as tgt
 
 @dataclass
 class Signal:
-    symbol:      str
-    action:      str          # "BUY" | "SELL"
-    entry:       float
-    sl:          float
-    tp:          float
-    lots:        float
-    rr:          float
-    pattern:     str
-    entry_num:   int          # 1 = first entry, 2/3 = DCA
+    symbol:        str
+    action:        str          # "BUY" | "SELL"
+    entry:         float
+    sl:            float
+    tp:            float
+    lots:          float
+    rr:            float
+    pattern:       str
+    entry_num:     int          # 1 = first entry, 2/3 = pyramid
+    confirmations: int          # 1-3 — drives lot size
+    early_exit:    float        # suggested early cut price
     tp_points:   float
     sl_points:   float = config.SL_POINTS
 
 
-def _lot_size(risk_usd: float) -> float:
-    if config.FIXED_LOT is not None:
-        return config.FIXED_LOT
-    risk_per_lot = config.SL_POINTS * 100
-    lot = risk_usd / risk_per_lot
-    lot = round(round(lot / 0.01) * 0.01, 2)
-    return max(config.MIN_LOT, min(config.MAX_LOT, lot))
+def _lot_size(confirmations: int) -> float:
+    if confirmations >= 3:
+        return config.LOT_TIER_3
+    if confirmations == 2:
+        return config.LOT_TIER_2
+    return config.LOT_TIER_1
+
+
+def _early_exit(entry: float, action: str) -> float:
+    if action == "BUY":
+        return round(entry - config.EARLY_EXIT_POINTS, 2)
+    return round(entry + config.EARLY_EXIT_POINTS, 2)
 
 
 def _rr(entry, sl, tp) -> float:
@@ -101,19 +108,22 @@ def evaluate(symbol: str) -> Signal | None:
                 tp = active.tp
 
             tgt.add_dca_entry(symbol, entry)
-            lots = _lot_size(risk_manager.risk_amount_usd())
+            action = "BUY" if active.direction == "bull" else "SELL"
+            lots   = _lot_size(2)   # pyramid entries always tier 2
 
             return Signal(
-                symbol    = symbol,
-                action    = "BUY" if active.direction == "bull" else "SELL",
-                entry     = round(entry, 2),
-                sl        = round(sl, 2),
-                tp        = round(tp, 2),
-                lots      = lots,
-                rr        = _rr(entry, sl, tp),
-                pattern   = "DCA Entry",
-                entry_num = active.entry_count,
-                tp_points = round(abs(tp - entry), 2),
+                symbol        = symbol,
+                action        = action,
+                entry         = round(entry, 2),
+                sl            = round(sl, 2),
+                tp            = round(tp, 2),
+                lots          = lots,
+                rr            = _rr(entry, sl, tp),
+                pattern       = "Pyramid Entry",
+                entry_num     = active.entry_count,
+                tp_points     = round(abs(tp - entry), 2),
+                confirmations = 2,
+                early_exit    = _early_exit(round(entry, 2), action),
             )
         return None
 
@@ -138,6 +148,9 @@ def evaluate(symbol: str) -> Signal | None:
     if pattern is None and not macd_ok and not rsi_ok:
         print(f"  [{symbol}] No signal — {trend} trend, no confirmation | RSI {rsi:.1f}")
         return None
+
+    # Count confirmations → drives lot size
+    confirmations = sum([bool(pattern), macd_ok, rsi_ok])
     if pattern is None:
         pattern = "MACD Cross" if macd_ok else "RSI Momentum"
 
@@ -151,18 +164,21 @@ def evaluate(symbol: str) -> Signal | None:
     entry = price
     sl    = (entry - config.SL_POINTS) if trend == "bull" else (entry + config.SL_POINTS)
 
-    lots = _lot_size(risk_manager.risk_amount_usd())
-    sig  = Signal(
-        symbol    = symbol,
-        action    = "BUY" if trend == "bull" else "SELL",
-        entry     = round(entry, 2),
-        sl        = round(sl, 2),
-        tp        = round(tp, 2),
-        lots      = lots,
-        rr        = _rr(entry, sl, tp),
-        pattern   = pattern,
-        entry_num = 1,
-        tp_points = round(abs(tp - entry), 2),
+    action = "BUY" if trend == "bull" else "SELL"
+    lots   = _lot_size(confirmations)
+    sig    = Signal(
+        symbol        = symbol,
+        action        = action,
+        entry         = round(entry, 2),
+        sl            = round(sl, 2),
+        tp            = round(tp, 2),
+        lots          = lots,
+        rr            = _rr(entry, sl, tp),
+        pattern       = pattern,
+        entry_num     = 1,
+        tp_points     = round(abs(tp - entry), 2),
+        confirmations = confirmations,
+        early_exit    = _early_exit(round(entry, 2), action),
     )
 
     tgt.set_target(symbol, trend, tp, entry)

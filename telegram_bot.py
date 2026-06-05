@@ -27,6 +27,7 @@ def send_signal(sig: Signal):
 
     loss_usd  = round(sig.lots * config.SL_POINTS * 100, 0)
     win_usd   = round(sig.lots * sig.tp_points * 100, 0)
+    stars     = "⭐" * sig.confirmations
 
     msg = (
         f"{header}\n"
@@ -35,11 +36,12 @@ def send_signal(sig: Signal):
         f"TP:     <b>{sig.tp:.2f}</b>   (+{sig.tp_points:.1f} pts)\n"
         f"SL:     <b>{sig.sl:.2f}</b>   (-{sig.sl_points} pts)\n"
         f"{'━' * 28}\n"
-        f"Lots:   <b>{sig.lots}</b>\n"
+        f"Lots:   <b>{sig.lots}</b>   {stars}\n"
         f"Win:    ~${win_usd:.0f}  |  Loss: ~${loss_usd:.0f}\n"
         f"R:R     1:{sig.rr}\n"
         f"{'━' * 28}\n"
         f"Signal: {sig.pattern}\n"
+        f"Cut early at <b>{sig.early_exit:.2f}</b> if no move in 2 candles\n"
         f"News:   Clear ✅"
     )
     _send(msg)

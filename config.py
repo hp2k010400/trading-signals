@@ -16,10 +16,16 @@ TREND_TF   = "H1"
 
 # ── Risk ──────────────────────────────────────────────────────────────────────
 ACCOUNT_BALANCE     = float(os.environ.get("ACCOUNT_BALANCE", "10000"))
-RISK_PER_ENTRY_PCT  = 0.5     # used only if FIXED_LOT is None
-FIXED_LOT           = 0.1     # set to None to use RISK_PER_ENTRY_PCT calculation
 MIN_LOT             = 0.01
 MAX_LOT             = 5.0
+
+# Variable lot sizing by signal strength (matches friend's 0.1-0.5 sizing)
+LOT_TIER_1          = 0.10    # 1 confirmation  (RSI only)
+LOT_TIER_2          = 0.20    # 2 confirmations (RSI + pattern OR MACD)
+LOT_TIER_3          = 0.30    # 3 confirmations (RSI + pattern + MACD)
+
+# Early exit — suggest cutting at this many points if no momentum
+EARLY_EXIT_POINTS   = 7
 
 # ── Fixed SL/TP (reverse-engineered from screenshots) ─────────────────────────
 SL_POINTS           = 15      # fixed 15 points stop loss
