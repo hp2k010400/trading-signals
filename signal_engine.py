@@ -97,8 +97,9 @@ def evaluate(symbol: str) -> Signal | None:
             tgt.clear(symbol)
             return None
 
-        # Fire a DCA entry if price has pulled back
-        if active.needs_dca(price) and not active.is_full():
+        # Fire a DCA entry only if price pulled back AND there's still meaningful room to TP
+        room_to_tp = abs(active.tp - price)
+        if active.needs_dca(price) and not active.is_full() and room_to_tp >= config.SL_POINTS:
             entry = price
             if active.direction == "bull":
                 sl = entry - config.SL_POINTS
