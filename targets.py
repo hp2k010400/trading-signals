@@ -1,17 +1,19 @@
 """
 Tracks active trade targets per symbol.
-Each target has a direction, a TP level, and up to MAX_ENTRIES entries.
-New entries (DCA) fire when price pulls back ENTRY_SEPARATION points.
+State is persisted to targets_state.json so it survives bot restarts.
 """
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json, os
 import config
+
+STATE_FILE = "targets_state.json"
 
 
 @dataclass
 class Target:
     symbol:    str
-    direction: str          # "bull" | "bear"
+    direction: str
     tp:        float
     entries:   list[float] = field(default_factory=list)
     created:   datetime    = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -32,12 +34,6 @@ class Target:
         return age > config.TARGET_EXPIRY_HOURS * 3600
 
     def needs_dca(self, current_price: float) -> bool:
-        """
-        True if price has moved FURTHER in our direction since last entry.
-        This is pyramiding (adding to winners) not averaging down.
-        For buys:  price moved UP   sep points from last entry
-        For sells: price moved DOWN sep points from last entry
-        """
         if self.is_full() or self.last_entry is None:
             return False
         sep = config.ENTRY_SEPARATION
@@ -69,16 +65,64 @@ class Target:
     def add_entry(self, price: float):
         self.entries.append(price)
 
+    def to_dict(self) -> dict:
+        return {
+            "symbol":    self.symbol,
+            "direction": self.direction,
+            "tp":        self.tp,
+            "entries":   self.entries,
+            "created":   self.created.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Target":
+        t = cls(
+            symbol    = d["symbol"],
+            direction = d["direction"],
+            tp        = d["tp"],
+            entries   = d["entries"],
+            created   = datetime.fromisoformat(d["created"]),
+        )
+        return t
+
 
 # ── Global state ──────────────────────────────────────────────────────────────
 
-_active: dict[str, Target] = {}   # symbol → Target
+_active: dict[str, Target] = {}
+
+
+def _save():
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump({sym: t.to_dict() for sym, t in _active.items()}, f)
+    except Exception as e:
+        print(f"[Targets] Save failed: {e}")
+
+
+def _load():
+    if not os.path.exists(STATE_FILE):
+        return
+    try:
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+        for sym, d in data.items():
+            t = Target.from_dict(d)
+            if not t.is_expired():
+                _active[sym] = t
+                print(f"[Targets] Restored: {sym} {t.direction} TP={t.tp} entries={t.entry_count}")
+    except Exception as e:
+        print(f"[Targets] Load failed: {e}")
+
+
+# Load persisted state on import
+_load()
 
 
 def get(symbol: str) -> Target | None:
     t = _active.get(symbol)
     if t and t.is_expired():
         del _active[symbol]
+        _save()
         return None
     return t
 
@@ -87,13 +131,16 @@ def set_target(symbol: str, direction: str, tp: float, entry_price: float) -> Ta
     t = Target(symbol=symbol, direction=direction, tp=tp)
     t.add_entry(entry_price)
     _active[symbol] = t
+    _save()
     return t
 
 
 def clear(symbol: str):
     _active.pop(symbol, None)
+    _save()
 
 
 def add_dca_entry(symbol: str, entry_price: float):
     if symbol in _active:
         _active[symbol].add_entry(entry_price)
+        _save()
