@@ -24,11 +24,8 @@ LOT_TIER_1          = 0.10    # 1 confirmation  (RSI only)
 LOT_TIER_2          = 0.20    # 2 confirmations (RSI + pattern OR MACD)
 LOT_TIER_3          = 0.30    # 3 confirmations (RSI + pattern + MACD)
 
-# Early exit — suggest cutting at this many points if no momentum
-EARLY_EXIT_POINTS   = 7
-
-# ── Fixed SL/TP (reverse-engineered from screenshots) ─────────────────────────
-SL_POINTS           = 15      # fixed 15 points stop loss
+# ── SL/TP settings ────────────────────────────────────────────────────────────
+SL_POINTS           = 7       # tight SL matching friend's actual losses (5-7 pts)
 TP_BUFFER           = 2       # place TP 2 pts before the S/R level
 ROUND_NUMBER_STEP   = 25      # gold clusters around every 25 points
 

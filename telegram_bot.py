@@ -41,7 +41,6 @@ def send_signal(sig: Signal):
         f"R:R     1:{sig.rr}\n"
         f"{'━' * 28}\n"
         f"Signal: {sig.pattern}\n"
-        f"Cut early at <b>{sig.early_exit:.2f}</b> if no move in 2 candles\n"
         f"News:   Clear ✅"
     )
     _send(msg)
