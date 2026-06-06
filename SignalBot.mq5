@@ -189,7 +189,7 @@ void ProcessSymbol(string sym, int idx)
 
    // ── Fresh signal ───────────────────────────────────────────────
    MqlRates bars[];
-   if(ArrayCopyRates(bars, sym, PERIOD_M15) < 50) return;
+   if(CopyRates(sym, PERIOD_M15, 0, 200, bars) < 50) return;
    ArraySetAsSeries(bars, true);
 
    double emaF = GetEMA(sym, EmaFast, 1);
@@ -430,7 +430,7 @@ double FindTP(string sym, double price, string trend, MqlRates &bars[])
 
    // Daily pivots
    MqlRates daily[];
-   if(ArrayCopyRates(daily, sym, PERIOD_D1) >= 2)
+   if(CopyRates(sym, PERIOD_D1, 0, 5, daily) >= 2)
    {
       ArraySetAsSeries(daily, true);
       double H=daily[1].high, L=daily[1].low, C=daily[1].close;
