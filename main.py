@@ -30,6 +30,19 @@ def _check_exits():
             pass
 
 
+def _market_open() -> bool:
+    """Gold trades Sun 21:00 UTC → Fri 21:00 UTC. Closed all Saturday."""
+    now = datetime.now(timezone.utc)
+    wd  = now.weekday()   # 0=Mon … 5=Sat, 6=Sun
+    if wd == 5:
+        return False                        # Saturday — always closed
+    if wd == 6 and now.hour < 21:
+        return False                        # Sunday before 9pm UTC — not yet open
+    if wd == 4 and now.hour >= 21:
+        return False                        # Friday after 9pm UTC — closed for weekend
+    return True
+
+
 def run():
     telegram_bot.send_startup()
     print(f"[Bot] Started — polling every {config.POLL_INTERVAL_SECONDS}s")
@@ -37,6 +50,11 @@ def run():
     while True:
         try:
             now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+
+            if not _market_open():
+                print(f"[{now}] Market closed — weekend")
+                time.sleep(config.POLL_INTERVAL_SECONDS)
+                continue
 
             blocked, news_msg = news_filter.is_news_window()
             if blocked:
