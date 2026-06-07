@@ -44,9 +44,13 @@ input int    NewsPauseMin = 30;   // pause signals ±N minutes around high-impac
 // Safety
 input bool   AutoExecute = true;
 
+// Symbols (FTMO: XAUUSD.s + XAUUSD.QTR | Pepperstone/other: XAUUSD)
+input string Symbol1 = "XAUUSD.s";
+input string Symbol2 = "XAUUSD.QTR";
+
 //── Symbols ──────────────────────────────────────────────────────────
 #define NUM_SYMBOLS 2
-string Symbols[NUM_SYMBOLS] = {"XAUUSD.s", "XAUUSD.QTR"};
+string Symbols[NUM_SYMBOLS];
 
 //── State keys (global variables persist between timer calls) ────────
 // Keys: SignalBot_{idx}_active, _dir (1=bull/-1=bear), _tp, _last_entry, _entries, _created
@@ -75,6 +79,9 @@ CTrade trade;
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   Symbols[0] = Symbol1;
+   Symbols[1] = Symbol2;
+
    trade.SetExpertMagicNumber(20250605);
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_IOC);
