@@ -34,12 +34,15 @@ class Signal:
     sl_points:   float = config.SL_POINTS
 
 
-def _lot_size(confirmations: int) -> float:
+def _lot_size(symbol: str, confirmations: int) -> float:
     if confirmations >= 3:
-        return config.LOT_TIER_3
-    if confirmations == 2:
-        return config.LOT_TIER_2
-    return config.LOT_TIER_1
+        risk_pct = config.RISK_PCT_TIER_3
+    elif confirmations == 2:
+        risk_pct = config.RISK_PCT_TIER_2
+    else:
+        risk_pct = config.RISK_PCT_TIER_1
+    risk_usd = config.ACCOUNT_BALANCE * (risk_pct / 100)
+    return data_client.calc_lot_size(symbol, config.SL_POINTS, risk_usd)
 
 
 def _early_exit(entry: float, action: str) -> float:
@@ -115,7 +118,7 @@ def evaluate(symbol: str) -> Signal | None:
 
             tgt.add_dca_entry(symbol, entry)
             action = "BUY" if active.direction == "bull" else "SELL"
-            lots   = _lot_size(2)   # pyramid entries always tier 2
+            lots   = _lot_size(symbol, 2)   # pyramid entries always tier 2
 
             return Signal(
                 symbol        = symbol,
@@ -171,7 +174,7 @@ def evaluate(symbol: str) -> Signal | None:
     sl    = (entry - config.SL_POINTS) if trend == "bull" else (entry + config.SL_POINTS)
 
     action = "BUY" if trend == "bull" else "SELL"
-    lots   = _lot_size(confirmations)
+    lots   = _lot_size(symbol, confirmations)
     sig    = Signal(
         symbol        = symbol,
         action        = action,

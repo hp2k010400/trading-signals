@@ -16,9 +16,10 @@ input string TelegramToken   = "8660365489:AAETZxHhTc-OB8ne19LS4o3Jn5z0LvhXyMo";
 input string TelegramChatId  = "5515778237";
 input int    PollSeconds     = 300;
 
-input double LotTier1  = 0.10;
-input double LotTier2  = 0.20;
-input double LotTier3  = 0.30;
+// Risk % of account per trade (scales automatically with balance)
+input double RiskPct1  = 0.25;   // 1 confirmation — conservative
+input double RiskPct2  = 0.40;   // 2 confirmations
+input double RiskPct3  = 0.50;   // 3 confirmations — highest conviction
 
 input int    SlPoints       = 7;
 input int    TpBuffer       = 2;
@@ -111,6 +112,28 @@ bool InSlCooldown(int idx)
       return true;
    }
    return false;
+}
+
+//── Lot sizing ───────────────────────────────────────────────────────
+double CalcLots(string sym, double riskPct)
+{
+   double balance    = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskMoney  = balance * riskPct / 100.0;
+
+   double tickVal    = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize   = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   if(tickVal <= 0 || tickSize <= 0) return 0.01;
+
+   double riskPerLot = (SlPoints / tickSize) * tickVal;
+   if(riskPerLot <= 0) return 0.01;
+
+   double lots    = riskMoney / riskPerLot;
+   double lotStep = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   lots = MathFloor(lots / lotStep) * lotStep;
+
+   double minLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(sym, SYMBOL_VOLUME_MAX);
+   return MathMax(minLot, MathMin(lots, maxLot));
 }
 
 //── News cache ────────────────────────────────────────────────────────
@@ -239,8 +262,9 @@ void ProcessSymbol(string sym, int idx)
          double dcaSl  = (dir == 1) ? exPrc - SlPoints : exPrc + SlPoints;
          string action = (dir == 1) ? "BUY" : "SELL";
          double tpPts  = MathAbs(tp - exPrc);
-         double winUsd = LotTier2 * tpPts * 100;
-         double losUsd = LotTier2 * SlPoints * 100;
+         double dcaLots = CalcLots(sym, RiskPct2);
+         double winUsd = dcaLots * tpPts * 100;
+         double losUsd = dcaLots * SlPoints * 100;
 
          Print("[", sym, "] DCA entry ", (int)(entries+1), " @ ", DoubleToString(exPrc,2));
          SetState(idx, "last_entry", price);
@@ -253,14 +277,14 @@ void ProcessSymbol(string sym, int idx)
             + "Entry: <b>" + DoubleToString(exPrc,2) + "</b>\n"
             + "TP: <b>" + DoubleToString(tp,2) + "</b>   (+" + DoubleToString(tpPts,1) + " pts)\n"
             + "SL: <b>" + DoubleToString(dcaSl,2) + "</b>   (-" + IntegerToString(SlPoints) + " pts)\n"
-            + "Lots: <b>" + DoubleToString(LotTier2,2) + "</b> ⭐⭐\n"
+            + "Lots: <b>" + DoubleToString(dcaLots,2) + "</b> ⭐⭐\n"
             + "Win: ~$" + DoubleToString(winUsd,0) + "  |  Loss: ~$" + DoubleToString(losUsd,0) + "\n"
             + "Signal: Pyramid Entry\nNews: Clear ✅");
 
          if(AutoExecute)
          {
-            bool ok = (dir == 1) ? trade.Buy(LotTier2, sym, exPrc, dcaSl, tp, "signal-bot-dca")
-                                 : trade.Sell(LotTier2, sym, exPrc, dcaSl, tp, "signal-bot-dca");
+            bool ok = (dir == 1) ? trade.Buy(dcaLots, sym, exPrc, dcaSl, tp, "signal-bot-dca")
+                                 : trade.Sell(dcaLots, sym, exPrc, dcaSl, tp, "signal-bot-dca");
             if(!ok)
                SendTelegram("⚠️ DCA execution failed — " + sym
                   + ": " + IntegerToString(trade.ResultRetcode()));
@@ -311,9 +335,10 @@ void ProcessSymbol(string sym, int idx)
       return;
    }
 
-   int    confs = (candleOk?1:0) + (macdOk?1:0) + (rsiOk?1:0);
-   double lots  = (confs >= 3) ? LotTier3 : (confs == 2) ? LotTier2 : LotTier1;
-   string stars = "";
+   int    confs    = (candleOk?1:0) + (macdOk?1:0) + (rsiOk?1:0);
+   double riskPct  = (confs >= 3) ? RiskPct3 : (confs == 2) ? RiskPct2 : RiskPct1;
+   double lots     = CalcLots(sym, riskPct);
+   string stars    = "";
    for(int s=0; s<confs; s++) stars += "⭐";
    if(!candleOk) patternName = macdOk ? "MACD Cross" : "RSI Momentum";
 

@@ -18,10 +18,10 @@ ACCOUNT_BALANCE     = float(os.environ.get("ACCOUNT_BALANCE", "10000"))
 MIN_LOT             = 0.01
 MAX_LOT             = 5.0
 
-# Variable lot sizing by signal strength (matches friend's 0.1-0.5 sizing)
-LOT_TIER_1          = 0.10    # 1 confirmation  (RSI only)
-LOT_TIER_2          = 0.20    # 2 confirmations (RSI + pattern OR MACD)
-LOT_TIER_3          = 0.30    # 3 confirmations (RSI + pattern + MACD)
+# Risk % of account per trade — scales automatically with balance
+RISK_PCT_TIER_1     = 0.25    # 1 confirmation  (RSI only)
+RISK_PCT_TIER_2     = 0.40    # 2 confirmations (RSI + pattern OR MACD)
+RISK_PCT_TIER_3     = 0.50    # 3 confirmations (RSI + pattern + MACD)
 
 # ── SL/TP settings ────────────────────────────────────────────────────────────
 SL_POINTS           = 7       # tight SL matching friend's actual losses (5-7 pts)
