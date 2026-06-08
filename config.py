@@ -8,7 +8,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 TWELVE_DATA_KEY  = os.environ.get("TWELVE_DATA_KEY", "")
 
 # ── Symbols ───────────────────────────────────────────────────────────────────
-SYMBOLS = ["XAUUSD.s", "XAUUSD.QTR"]
+SYMBOLS = ["XAUUSD"]
 
 # ── Timeframes ────────────────────────────────────────────────────────────────
 PRIMARY_TF = "M15"
@@ -45,6 +45,16 @@ EARLY_EXIT_POINTS = 5   # suggested early cut if trade moves against you quickly
 # ── News filter ───────────────────────────────────────────────────────────────
 NEWS_PAUSE_MINUTES = 30
 NEWS_CURRENCIES    = ["USD", "XAU"]
+
+# ── Re-entry cooldown ─────────────────────────────────────────────────────────
+SL_COOLDOWN_MINUTES = 60   # after an SL, don't re-enter same symbol for this long
+
+# ── Daily loss protection ─────────────────────────────────────────────────────
+MAX_CONSECUTIVE_SL  = 3    # pause after this many SLs in a row
+SL_PAUSE_HOURS      = 4    # how long to pause trading after hitting the streak limit
+
+# ── Risk ──────────────────────────────────────────────────────────────────────
+RISK_PER_ENTRY_PCT  = 1.0  # % of account risked per trade (informational)
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL_SECONDS = 300   # 5 minutes — fast enough to catch pyramid entries

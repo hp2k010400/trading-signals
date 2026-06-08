@@ -1,12 +1,12 @@
 //+------------------------------------------------------------------+
 //| SignalBot.mq5 — Full Strategy EA                                 |
-//| Exact replica of the Railway signal bot:                         |
-//|   EMA 10/20 trend  |  RSI filter  |  Candle + MACD confirmation  |
-//|   Variable lot sizing  |  S/R TP targeting  |  DCA pyramid x3   |
-//|   News filter (ForexFactory)  |  Telegram notifications          |
+//| EMA 10/20 trend  |  RSI filter  |  Candle + MACD confirmation   |
+//| Variable lot sizing  |  S/R TP targeting  |  DCA pyramid x3     |
+//| News filter (ForexFactory)  |  Telegram notifications           |
+//| v3: single symbol, SL cooldown, DCA SL fix, consecutive SL cap  |
 //+------------------------------------------------------------------+
 #property copyright "GC4C Signal Bot"
-#property version   "2.00"
+#property version   "3.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -14,48 +14,41 @@
 //── Inputs ──────────────────────────────────────────────────────────
 input string TelegramToken   = "8660365489:AAETZxHhTc-OB8ne19LS4o3Jn5z0LvhXyMo";
 input string TelegramChatId  = "5515778237";
-input int    PollSeconds     = 300;    // check every 5 minutes
+input int    PollSeconds     = 300;
 
-// Lot sizing by signal strength (matches Railway bot)
-input double LotTier1  = 0.10;   // 1 confirmation
-input double LotTier2  = 0.20;   // 2 confirmations
-input double LotTier3  = 0.30;   // 3 confirmations
+input double LotTier1  = 0.10;
+input double LotTier2  = 0.20;
+input double LotTier3  = 0.30;
 
-// SL/TP
-input int    SlPoints       = 7;    // fixed stop loss
-input int    TpBuffer       = 2;    // close TP 2pts before S/R level
-input int    RoundNumStep   = 25;   // gold round number spacing
+input int    SlPoints       = 7;
+input int    TpBuffer       = 2;
+input int    RoundNumStep   = 25;
 
-// DCA pyramid settings
-input int    MaxEntries     = 3;    // max entries per target
-input int    EntrySep       = 5;    // min points move before adding entry
-input int    TargetExpiryH  = 24;   // drop target after this many hours
+input int    MaxEntries     = 3;
+input int    EntrySep       = 5;
+input int    TargetExpiryH  = 24;
 
-// Indicators
 input int    EmaFast    = 10;
 input int    EmaSlow    = 20;
 input int    RsiPeriod  = 14;
 input double RsiOB      = 75.0;
 input double RsiOS      = 20.0;
 
-// News filter
-input int    NewsPauseMin = 30;   // pause signals ±N minutes around high-impact news
+input int    NewsPauseMin     = 30;
+input int    SlCooldownMin    = 60;   // re-entry cooldown after SL (minutes)
+input int    MaxConsecutiveSL = 3;    // pause after this many SLs in a row
+input int    SlPauseHours     = 4;    // how long to pause after hitting the limit
 
-// Safety
 input bool   AutoExecute = true;
 
-// Symbols (FTMO: XAUUSD.s + XAUUSD.QTR | Pepperstone/other: XAUUSD)
 input string Symbol1 = "XAUUSD.s";
-input string Symbol2 = "XAUUSD.QTR";
 
-//── Symbols ──────────────────────────────────────────────────────────
-#define NUM_SYMBOLS 2
+//── Symbol ───────────────────────────────────────────────────────────
+#define NUM_SYMBOLS 1
 string Symbols[NUM_SYMBOLS];
 
-//── State keys (global variables persist between timer calls) ────────
-// Keys: SignalBot_{idx}_active, _dir (1=bull/-1=bear), _tp, _last_entry, _entries, _created
+//── Per-symbol state (Global Variables persist between timer calls) ──
 string StateKey(int idx, string field) { return "SB_" + IntegerToString(idx) + "_" + field; }
-
 void   SetState(int idx, string f, double v) { GlobalVariableSet(StateKey(idx,f), v); }
 double GetState(int idx, string f)           { return GlobalVariableGet(StateKey(idx,f)); }
 void   ClearState(int idx)
@@ -63,45 +56,100 @@ void   ClearState(int idx)
    GlobalVariableDel(StateKey(idx,"active"));
    GlobalVariableDel(StateKey(idx,"dir"));
    GlobalVariableDel(StateKey(idx,"tp"));
+   GlobalVariableDel(StateKey(idx,"first_entry"));
    GlobalVariableDel(StateKey(idx,"last_entry"));
    GlobalVariableDel(StateKey(idx,"entries"));
    GlobalVariableDel(StateKey(idx,"created"));
 }
 
-//── News calendar cache ──────────────────────────────────────────────
-string newsCache      = "";
-datetime newsFetched  = 0;
-#define NEWS_CACHE_SEC 10800   // refresh every 3 hours
+//── Risk / cooldown state (also in Global Variables) ─────────────────
+string CooldownKey(int idx) { return "SB_" + IntegerToString(idx) + "_sl_time"; }
+string SlStreakKey()         { return "SB_sl_streak"; }
+string PauseUntilKey()      { return "SB_pause_until"; }
 
-//── Trade object ─────────────────────────────────────────────────────
+void RecordSL(int idx)
+{
+   GlobalVariableSet(CooldownKey(idx), (double)TimeCurrent());
+   double streak = GlobalVariableGet(SlStreakKey()) + 1;
+   GlobalVariableSet(SlStreakKey(), streak);
+   if((int)streak >= MaxConsecutiveSL)
+   {
+      double pauseUntil = (double)(TimeCurrent() + SlPauseHours * 3600);
+      GlobalVariableSet(PauseUntilKey(), pauseUntil);
+      Print("[Risk] ", (int)streak, " consecutive SLs — paused for ", SlPauseHours, "h");
+      SendTelegram("⛔ <b>Trading Paused</b>\n"
+         + IntegerToString((int)streak) + " consecutive SLs hit.\n"
+         + "Resuming in " + IntegerToString(SlPauseHours) + " hours.");
+   }
+}
+
+void RecordTP()
+{
+   GlobalVariableSet(SlStreakKey(), 0);
+}
+
+bool IsTradingPaused()
+{
+   double pauseUntil = GlobalVariableGet(PauseUntilKey());
+   if((datetime)pauseUntil > TimeCurrent())
+   {
+      int minsLeft = (int)((pauseUntil - (double)TimeCurrent()) / 60);
+      Print("[Risk] Trading paused — ", minsLeft, " min remaining");
+      return true;
+   }
+   return false;
+}
+
+bool InSlCooldown(int idx)
+{
+   double lastSl = GlobalVariableGet(CooldownKey(idx));
+   if(lastSl == 0) return false;
+   int elapsedMin = (int)((TimeCurrent() - (datetime)lastSl) / 60);
+   if(elapsedMin < SlCooldownMin)
+   {
+      Print("[Cooldown] ", Symbols[idx], " — ", SlCooldownMin - elapsedMin, " min remaining");
+      return true;
+   }
+   return false;
+}
+
+//── News cache ────────────────────────────────────────────────────────
+string   newsCache    = "";
+datetime newsFetched  = 0;
+#define  NEWS_CACHE_SEC 10800
+
+//── Trade object ──────────────────────────────────────────────────────
 CTrade trade;
 
 //+------------------------------------------------------------------+
 int OnInit()
 {
    Symbols[0] = Symbol1;
-   Symbols[1] = Symbol2;
 
    trade.SetExpertMagicNumber(20250605);
    trade.SetDeviationInPoints(20);
    trade.SetTypeFilling(ORDER_FILLING_IOC);
 
    EventSetTimer(PollSeconds);
-   Print("[SignalBot v2] Started");
+   Print("[SignalBot v3] Started — ", Symbol1);
 
-   SendTelegram("✅ <b>MT5 Signal Bot v2 Active</b>\n"
+   SendTelegram("✅ <b>MT5 Signal Bot v3 Active</b>\n"
       + "Account: " + AccountInfoString(ACCOUNT_NAME) + "\n"
       + "Balance: $" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "\n"
-      + "Watching: XAUUSD.s, XAUUSD.QTR\n"
-      + "Features: DCA pyramid ✓  News filter ✓  Variable lots ✓");
+      + "Watching: " + Symbol1 + "\n"
+      + "SL cooldown: " + IntegerToString(SlCooldownMin) + " min ✓\n"
+      + "Consecutive SL cap: " + IntegerToString(MaxConsecutiveSL) + " → " + IntegerToString(SlPauseHours) + "h pause ✓\n"
+      + "DCA SL anchored to first entry ✓");
 
    return INIT_SUCCEEDED;
 }
 
 void OnDeinit(const int reason) { EventKillTimer(); }
+
 void OnTimer()
 {
-   // Global news check first
+   if(IsTradingPaused()) return;
+
    bool newsBlocked; string newsMsg;
    CheckNews(newsBlocked, newsMsg);
    if(newsBlocked) { Print("[News] Paused: ", newsMsg); return; }
@@ -119,16 +167,17 @@ void ProcessSymbol(string sym, int idx)
 
    MqlTick tick;
    if(!SymbolInfoTick(sym, tick)) return;
-   double price = tick.bid;   // use bid as reference (mid-point for analysis)
+   double price = tick.bid;
 
-   // ── Check if active target exists ─────────────────────────────
+   // ── Active target ─────────────────────────────────────────────
    if(GetState(idx, "active") == 1)
    {
-      double tp      = GetState(idx, "tp");
-      double dir     = GetState(idx, "dir");   // 1=bull, -1=bear
-      double created = GetState(idx, "created");
-      double entries = GetState(idx, "entries");
-      double lastEnt = GetState(idx, "last_entry");
+      double tp       = GetState(idx, "tp");
+      double dir      = GetState(idx, "dir");
+      double created  = GetState(idx, "created");
+      double entries  = GetState(idx, "entries");
+      double lastEnt  = GetState(idx, "last_entry");
+      double firstEnt = GetState(idx, "first_entry");   // SL anchor — never changes
 
       // Expire old target
       if((double)TimeCurrent() - created > TargetExpiryH * 3600)
@@ -143,12 +192,30 @@ void ProcessSymbol(string sym, int idx)
       if(tpHit)
       {
          Print("[", sym, "] TP hit at ", DoubleToString(tp,2));
-         SendTelegram("✅ <b>TP HIT — " + sym + "</b>\nTarget " + DoubleToString(tp,2) + " reached — all entries closed!");
+         SendTelegram("✅ <b>TP HIT — " + sym + "</b>\n"
+            + "Target " + DoubleToString(tp,2) + " reached — all entries closed!");
+         RecordTP();
          ClearState(idx);
          return;
       }
 
-      // Check trend still valid
+      // SL hit — anchored to FIRST entry (not last DCA entry)
+      double sl  = (dir == 1) ? firstEnt - SlPoints : firstEnt + SlPoints;
+      bool slHit = (dir == 1 && price <= sl) || (dir == -1 && price >= sl);
+      if(slHit)
+      {
+         Print("[", sym, "] SL hit at ", DoubleToString(sl,2),
+               " (first entry anchor: ", DoubleToString(firstEnt,2), ")");
+         SendTelegram("🛑 <b>SL HIT — " + sym + "</b>\n"
+            + "Stop " + DoubleToString(sl,2) + " triggered — "
+            + IntegerToString((int)entries) + " entr"
+            + ((int)entries == 1 ? "y" : "ies") + " closed at loss.");
+         RecordSL(idx);
+         ClearState(idx);
+         return;
+      }
+
+      // Trend still valid?
       double emaF = GetEMA(sym, EmaFast, 1);
       double emaS = GetEMA(sym, EmaSlow, 1);
       if(emaF == 0 || emaS == 0) return;
@@ -160,41 +227,52 @@ void ProcessSymbol(string sym, int idx)
          return;
       }
 
-      // DCA: only if price moved further in direction AND enough room to TP
-      bool movedEnough = (dir == 1)  ? price >= lastEnt + EntrySep
-                                     : price <= lastEnt - EntrySep;
+      // DCA: price moved EntrySep pts further in direction AND room to TP remains
+      bool movedEnough = (dir == 1) ? price >= lastEnt + EntrySep
+                                    : price <= lastEnt - EntrySep;
       double roomToTp  = MathAbs(tp - price);
       bool   hasSep    = movedEnough && (roomToTp >= SlPoints) && (entries < MaxEntries);
 
       if(hasSep)
       {
-         double sl     = (dir == 1) ? price - SlPoints : price + SlPoints;
          double exPrc  = (dir == 1) ? tick.ask : tick.bid;
+         double dcaSl  = (dir == 1) ? exPrc - SlPoints : exPrc + SlPoints;
          string action = (dir == 1) ? "BUY" : "SELL";
+         double tpPts  = MathAbs(tp - exPrc);
+         double winUsd = LotTier2 * tpPts * 100;
+         double losUsd = LotTier2 * SlPoints * 100;
 
          Print("[", sym, "] DCA entry ", (int)(entries+1), " @ ", DoubleToString(exPrc,2));
          SetState(idx, "last_entry", price);
          SetState(idx, "entries", entries + 1);
 
+         string emoji = (dir == 1) ? "🟢" : "🔴";
+         SendTelegram(emoji + " <b>" + action + " — " + sym
+            + "  [DCA Entry " + IntegerToString((int)(entries+1))
+            + "/" + IntegerToString(MaxEntries) + "]</b>\n"
+            + "Entry: <b>" + DoubleToString(exPrc,2) + "</b>\n"
+            + "TP: <b>" + DoubleToString(tp,2) + "</b>   (+" + DoubleToString(tpPts,1) + " pts)\n"
+            + "SL: <b>" + DoubleToString(dcaSl,2) + "</b>   (-" + IntegerToString(SlPoints) + " pts)\n"
+            + "Lots: <b>" + DoubleToString(LotTier2,2) + "</b> ⭐⭐\n"
+            + "Win: ~$" + DoubleToString(winUsd,0) + "  |  Loss: ~$" + DoubleToString(losUsd,0) + "\n"
+            + "Signal: Pyramid Entry\nNews: Clear ✅");
+
          if(AutoExecute)
          {
-            bool ok = (dir == 1) ? trade.Buy(LotTier2, sym, exPrc, sl, tp, "signal-bot-dca")
-                                 : trade.Sell(LotTier2, sym, exPrc, sl, tp, "signal-bot-dca");
-            string emoji = (dir == 1) ? "🟢" : "🔴";
-            if(ok)
-               SendTelegram(emoji + " <b>" + action + " — " + sym + "  [DCA Entry "
-                  + IntegerToString((int)(entries+1)) + "/" + IntegerToString(MaxEntries) + "]</b>\n"
-                  + "Entry: <b>" + DoubleToString(exPrc,2) + "</b>\n"
-                  + "TP: <b>" + DoubleToString(tp,2) + "</b>  SL: <b>" + DoubleToString(sl,2) + "</b>\n"
-                  + "Lots: <b>" + DoubleToString(LotTier2,2) + "</b>  Ticket: #" + IntegerToString((int)trade.ResultOrder()));
-            else
-               SendTelegram("⚠️ DCA failed — " + sym + ": " + IntegerToString(trade.ResultRetcode()));
+            bool ok = (dir == 1) ? trade.Buy(LotTier2, sym, exPrc, dcaSl, tp, "signal-bot-dca")
+                                 : trade.Sell(LotTier2, sym, exPrc, dcaSl, tp, "signal-bot-dca");
+            if(!ok)
+               SendTelegram("⚠️ DCA execution failed — " + sym
+                  + ": " + IntegerToString(trade.ResultRetcode()));
          }
       }
-      return;   // target active — no fresh signal
+      return;
    }
 
-   // ── Fresh signal ───────────────────────────────────────────────
+   // ── Cooldown check before looking for fresh signal ────────────
+   if(InSlCooldown(idx)) return;
+
+   // ── Fresh signal ──────────────────────────────────────────────
    MqlRates bars[];
    if(CopyRates(sym, PERIOD_M15, 0, 200, bars) < 50) return;
    ArraySetAsSeries(bars, true);
@@ -212,7 +290,6 @@ void ProcessSymbol(string sym, int idx)
    if(trend == "bull" && rsi > RsiOB) { Print("[",sym,"] RSI overbought ",DoubleToString(rsi,1)); return; }
    if(trend == "bear" && rsi < RsiOS) { Print("[",sym,"] RSI oversold ",DoubleToString(rsi,1));   return; }
 
-   // Confirmations
    bool   candleOk = false; string patternName = "";
    bool   macdOk   = CheckMACD(sym, trend);
    bool   rsiOk    = (trend == "bull") ? rsi > 50 : rsi < 50;
@@ -220,12 +297,12 @@ void ProcessSymbol(string sym, int idx)
    if(trend == "bull")
    {
       if(IsBullishEngulfing(bars)) { candleOk = true; patternName = "Bullish Engulfing"; }
-      if(IsBullishPinBar(bars))    { candleOk = true; patternName = "Bullish Pin Bar"; }
+      if(IsBullishPinBar(bars))    { candleOk = true; patternName = "Bullish Pin Bar";   }
    }
    else
    {
       if(IsBearishEngulfing(bars)) { candleOk = true; patternName = "Bearish Engulfing"; }
-      if(IsBearishPinBar(bars))    { candleOk = true; patternName = "Bearish Pin Bar"; }
+      if(IsBearishPinBar(bars))    { candleOk = true; patternName = "Bearish Pin Bar";   }
    }
 
    if(!candleOk && !macdOk && !rsiOk)
@@ -234,14 +311,12 @@ void ProcessSymbol(string sym, int idx)
       return;
    }
 
-   // Confirmation count → lot size
    int    confs = (candleOk?1:0) + (macdOk?1:0) + (rsiOk?1:0);
    double lots  = (confs >= 3) ? LotTier3 : (confs == 2) ? LotTier2 : LotTier1;
    string stars = "";
    for(int s=0; s<confs; s++) stars += "⭐";
    if(!candleOk) patternName = macdOk ? "MACD Cross" : "RSI Momentum";
 
-   // S/R TP level
    double tp = FindTP(sym, price, trend, bars);
    if(tp == 0) { Print("[",sym,"] No S/R level found — skip"); return; }
 
@@ -258,15 +333,15 @@ void ProcessSymbol(string sym, int idx)
          " TP:",DoubleToString(tp,2)," SL:",DoubleToString(sl,2),
          " Lots:",DoubleToString(lots,2)," Pattern:",patternName);
 
-   // Store target state for DCA tracking
-   SetState(idx, "active",     1);
-   SetState(idx, "dir",        dir);
-   SetState(idx, "tp",         tp);
-   SetState(idx, "last_entry", price);
-   SetState(idx, "entries",    1);
-   SetState(idx, "created",    (double)TimeCurrent());
+   // Store — first_entry is the permanent SL anchor for this target
+   SetState(idx, "active",      1);
+   SetState(idx, "dir",         dir);
+   SetState(idx, "tp",          tp);
+   SetState(idx, "first_entry", exPrc);
+   SetState(idx, "last_entry",  exPrc);
+   SetState(idx, "entries",     1);
+   SetState(idx, "created",     (double)TimeCurrent());
 
-   // Telegram signal message
    string emoji = (action == "BUY") ? "🟢" : "🔴";
    SendTelegram(emoji + " <b>" + action + " — " + sym + "</b>\n"
       + "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -282,7 +357,6 @@ void ProcessSymbol(string sym, int idx)
       + "RSI:    " + DoubleToString(rsi,1) + "\n"
       + "News:   Clear ✅");
 
-   // Execute
    if(!AutoExecute) return;
 
    bool ok = (action == "BUY") ? trade.Buy(lots, sym, tick.ask, sl, tp, "signal-bot")
@@ -297,13 +371,11 @@ void ProcessSymbol(string sym, int idx)
 }
 
 //+------------------------------------------------------------------+
-//── News filter (ForexFactory calendar) ─────────────────────────────
+//── News filter (ForexFactory) ───────────────────────────────────────
 //+------------------------------------------------------------------+
 void CheckNews(bool &blocked, string &msg)
 {
    blocked = false; msg = "";
-
-   // Refresh cache every 3 hours
    if(newsCache == "" || (TimeCurrent() - newsFetched) > NEWS_CACHE_SEC)
    {
       char post[], result[];
@@ -321,29 +393,21 @@ void CheckNews(bool &blocked, string &msg)
 
    while(true)
    {
-      // Find next high-impact USD event
       int imp = StringFind(newsCache, "\"High\"", pos);
       if(imp < 0) break;
-
-      // Check country nearby
       int cStart = StringFind(newsCache, "\"country\":", MathMax(0, imp-200));
       if(cStart < 0 || cStart > imp) { pos = imp+1; continue; }
       string country = ExtractJsonStr(newsCache, cStart);
       if(country != "USD" && country != "XAU") { pos = imp+1; continue; }
-
-      // Extract date
       int dStart = StringFind(newsCache, "\"date\":", MathMax(0, imp-200));
       if(dStart < 0 || dStart > imp) { pos = imp+1; continue; }
       string dateStr = ExtractJsonStr(newsCache, dStart);
       datetime evTime = StringToTime(StringSubstr(dateStr, 0, 19));
-
       if(MathAbs((double)(now - evTime)) <= pause)
       {
          int tStart = StringFind(newsCache, "\"title\":", MathMax(0, imp-300));
          string title = (tStart >= 0 && tStart < imp) ? ExtractJsonStr(newsCache, tStart) : "High-impact event";
-         msg     = country + ": " + title;
-         blocked = true;
-         return;
+         msg = country + ": " + title; blocked = true; return;
       }
       pos = imp + 1;
    }
@@ -435,7 +499,6 @@ double FindTP(string sym, double price, string trend, MqlRates &bars[])
    double minDist = SlPoints + TpBuffer;
    double best    = 0;
 
-   // Daily pivots
    MqlRates daily[];
    if(CopyRates(sym, PERIOD_D1, 0, 5, daily) >= 2)
    {
@@ -446,11 +509,9 @@ double FindTP(string sym, double price, string trend, MqlRates &bars[])
       for(int i=0; i<ArraySize(lvls); i++) EvalLevel(lvls[i], price, trend, minDist, best);
    }
 
-   // Round numbers
    double base = MathRound(price / RoundNumStep) * RoundNumStep;
    for(int i=-8; i<=8; i++) EvalLevel(base + RoundNumStep*i, price, trend, minDist, best);
 
-   // Swing highs/lows from recent M15 bars
    for(int i=5; i<45; i++)
    {
       bool isSwingH = true, isSwingL = true;
@@ -496,7 +557,8 @@ void SendTelegram(string text)
    ArrayResize(post, ArraySize(post)-1);
    int r = WebRequest("POST", url, hdrs, 8000, post, result, resHdrs);
    if(r < 0)
-      Print("[Telegram] Error ",GetLastError()," — add https://api.telegram.org to Tools>Options>Expert Advisors>Allow WebRequests");
+      Print("[Telegram] Error ", GetLastError(),
+            " — add https://api.telegram.org to Tools > Options > Expert Advisors > Allow WebRequests");
 }
 
 string EscapeJson(string s)

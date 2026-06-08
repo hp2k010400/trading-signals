@@ -23,9 +23,11 @@ def _check_exits():
             if active.tp_hit(price):
                 telegram_bot.send_tp_hit(symbol, active.tp)
                 tgt.clear(symbol)
+                risk_manager.record_tp()
             elif active.sl_hit(price):
                 telegram_bot.send_sl_hit(symbol, active.sl_level, active.entry_count)
                 tgt.clear(symbol)
+                risk_manager.record_sl(symbol)
         except Exception:
             pass
 

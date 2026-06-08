@@ -66,6 +66,11 @@ def evaluate(symbol: str) -> Signal | None:
         print(f"  [{symbol}] Risk: {risk_msg}")
         return None
 
+    cooled, cool_msg = risk_manager.in_sl_cooldown(symbol)
+    if cooled:
+        print(f"  [{symbol}] Cooldown: {cool_msg}")
+        return None
+
     # ── Fetch data ────────────────────────────────────────────────────────────
     try:
         df = ind.enrich(data_client.get_bars(symbol, config.PRIMARY_TF))

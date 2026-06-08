@@ -52,8 +52,8 @@ class Target:
     def sl_level(self) -> float:
         if not self.entries:
             return 0.0
-        last = self.entries[-1]
-        return (last + config.SL_POINTS) if self.direction == "bear" else (last - config.SL_POINTS)
+        first = self.entries[0]
+        return (first + config.SL_POINTS) if self.direction == "bear" else (first - config.SL_POINTS)
 
     def sl_hit(self, current_price: float) -> bool:
         sl = self.sl_level
