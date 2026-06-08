@@ -107,7 +107,7 @@ def evaluate(symbol: str) -> Signal | None:
 
         # Fire a DCA entry only if price pulled back AND there's still meaningful room to TP
         room_to_tp = abs(active.tp - price)
-        if active.needs_dca(price) and not active.is_full() and room_to_tp >= config.SL_POINTS:
+        if not active.counter_trend and active.needs_dca(price) and not active.is_full() and room_to_tp >= config.SL_POINTS:
             entry = price
             if active.direction == "bull":
                 sl = entry - config.SL_POINTS
@@ -144,15 +144,16 @@ def evaluate(symbol: str) -> Signal | None:
         print(f"  [{symbol}] No signal — trend flat | RSI {rsi:.1f} | Price {price:.2f}")
         return None
 
-    # H1 trend filter
+    # H1 trend filter — counter-trend = tier 1 only, no DCA
+    counter_trend = False
     if config.USE_H1_FILTER:
         try:
             df_h1 = data_client.get_bars(symbol, "H1", 50)
             df_h1 = ind.enrich(df_h1)
             h1_trend = ind.trend_direction(df_h1)
             if h1_trend != "flat" and h1_trend != trend:
-                print(f"  [{symbol}] H1 filter blocked — M15:{trend} H1:{h1_trend}")
-                return None
+                counter_trend = True
+                print(f"  [{symbol}] H1 counter-trend — M15:{trend} H1:{h1_trend} — tier 1 only, no DCA")
         except Exception:
             pass
 
@@ -193,7 +194,7 @@ def evaluate(symbol: str) -> Signal | None:
     sl    = (entry - config.SL_POINTS) if trend == "bull" else (entry + config.SL_POINTS)
 
     action = "BUY" if trend == "bull" else "SELL"
-    lots   = _lot_size(symbol, confirmations)
+    lots   = _lot_size(symbol, 1 if counter_trend else confirmations)
     sig    = Signal(
         symbol        = symbol,
         action        = action,
@@ -209,5 +210,5 @@ def evaluate(symbol: str) -> Signal | None:
         early_exit    = _early_exit(round(entry, 2), action),
     )
 
-    tgt.set_target(symbol, trend, tp, entry)
+    tgt.set_target(symbol, trend, tp, entry, counter_trend=counter_trend)
     return sig

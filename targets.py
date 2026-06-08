@@ -12,11 +12,12 @@ STATE_FILE = "targets_state.json"
 
 @dataclass
 class Target:
-    symbol:    str
-    direction: str
-    tp:        float
-    entries:   list[float] = field(default_factory=list)
-    created:   datetime    = field(default_factory=lambda: datetime.now(timezone.utc))
+    symbol:        str
+    direction:     str
+    tp:            float
+    entries:       list[float] = field(default_factory=list)
+    created:       datetime    = field(default_factory=lambda: datetime.now(timezone.utc))
+    counter_trend: bool        = False   # no DCA on counter-trend trades
 
     @property
     def entry_count(self) -> int:
@@ -127,8 +128,8 @@ def get(symbol: str) -> Target | None:
     return t
 
 
-def set_target(symbol: str, direction: str, tp: float, entry_price: float) -> Target:
-    t = Target(symbol=symbol, direction=direction, tp=tp)
+def set_target(symbol: str, direction: str, tp: float, entry_price: float, counter_trend: bool = False) -> Target:
+    t = Target(symbol=symbol, direction=direction, tp=tp, counter_trend=counter_trend)
     t.add_entry(entry_price)
     _active[symbol] = t
     _save()

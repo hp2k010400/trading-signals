@@ -255,11 +255,12 @@ void ProcessSymbol(string sym, int idx)
          return;
       }
 
-      // DCA: price moved EntrySep pts further in direction AND room to TP remains
+      // DCA: blocked on counter-trend trades
+      bool isCounterTrend = (GetState(idx, "counter_trend") == 1);
       bool movedEnough = (dir == 1) ? price >= lastEnt + EntrySep
                                     : price <= lastEnt - EntrySep;
       double roomToTp  = MathAbs(tp - price);
-      bool   hasSep    = movedEnough && (roomToTp >= SlPoints) && (entries < MaxEntries);
+      bool   hasSep    = !isCounterTrend && movedEnough && (roomToTp >= SlPoints) && (entries < MaxEntries);
 
       if(hasSep)
       {
@@ -315,7 +316,8 @@ void ProcessSymbol(string sym, int idx)
    if(emaF < emaS) trend = "bear";
    if(trend == "flat") return;
 
-   // H1 trend filter — only trade with the higher timeframe direction
+   // H1 trend filter — counter-trend = tier 1 only, no DCA
+   bool counterTrend = false;
    if(UseH1Filter)
    {
       double h1F = GetEMATF(sym, EmaFast, PERIOD_H1, 1);
@@ -325,8 +327,8 @@ void ProcessSymbol(string sym, int idx)
          string h1Trend = (h1F > h1S) ? "bull" : (h1F < h1S) ? "bear" : "flat";
          if(h1Trend != "flat" && h1Trend != trend)
          {
-            Print("[",sym,"] H1 filter blocked — M15:",trend," H1:",h1Trend);
-            return;
+            counterTrend = true;
+            Print("[",sym,"] H1 counter-trend — M15:",trend," H1:",h1Trend," — tier 1 only, no DCA");
          }
       }
    }
@@ -368,7 +370,8 @@ void ProcessSymbol(string sym, int idx)
    }
 
    int    confs    = (candleOk?1:0) + (macdOk?1:0) + (rsiOk?1:0);
-   double riskPct  = (confs >= 3) ? RiskPct3 : (confs == 2) ? RiskPct2 : RiskPct1;
+   double riskPct  = counterTrend ? RiskPct1
+                    : (confs >= 3) ? RiskPct3 : (confs == 2) ? RiskPct2 : RiskPct1;
    double lots     = CalcLots(sym, riskPct);
    string stars    = "";
    for(int s=0; s<confs; s++) stars += "⭐";
@@ -391,13 +394,14 @@ void ProcessSymbol(string sym, int idx)
          " Lots:",DoubleToString(lots,2)," Pattern:",patternName);
 
    // Store — first_entry is the permanent SL anchor for this target
-   SetState(idx, "active",      1);
-   SetState(idx, "dir",         dir);
-   SetState(idx, "tp",          tp);
-   SetState(idx, "first_entry", exPrc);
-   SetState(idx, "last_entry",  exPrc);
-   SetState(idx, "entries",     1);
-   SetState(idx, "created",     (double)TimeCurrent());
+   SetState(idx, "active",        1);
+   SetState(idx, "dir",           dir);
+   SetState(idx, "tp",            tp);
+   SetState(idx, "first_entry",   exPrc);
+   SetState(idx, "last_entry",    exPrc);
+   SetState(idx, "entries",       1);
+   SetState(idx, "created",       (double)TimeCurrent());
+   SetState(idx, "counter_trend", counterTrend ? 1 : 0);
 
    string emoji = (action == "BUY") ? "🟢" : "🔴";
    SendTelegram(emoji + " <b>" + action + " — " + sym + "</b>\n"
