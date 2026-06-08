@@ -143,6 +143,25 @@ def evaluate(symbol: str) -> Signal | None:
     if trend == "flat":
         print(f"  [{symbol}] No signal — trend flat | RSI {rsi:.1f} | Price {price:.2f}")
         return None
+
+    # H1 trend filter
+    if config.USE_H1_FILTER:
+        try:
+            df_h1 = data_client.get_bars(symbol, "H1", 50)
+            df_h1 = ind.enrich(df_h1)
+            h1_trend = ind.trend_direction(df_h1)
+            if h1_trend != "flat" and h1_trend != trend:
+                print(f"  [{symbol}] H1 filter blocked — M15:{trend} H1:{h1_trend}")
+                return None
+        except Exception:
+            pass
+
+    # ADX filter
+    if config.USE_ADX_FILTER:
+        adx = ind.adx_value(df)
+        if adx > 0 and adx < config.ADX_MIN:
+            print(f"  [{symbol}] ADX {adx:.1f} < {config.ADX_MIN} — ranging, skip")
+            return None
     if trend == "bull" and rsi > config.RSI_OB:
         print(f"  [{symbol}] No signal — RSI overbought {rsi:.1f}")
         return None

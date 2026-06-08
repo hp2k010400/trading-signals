@@ -61,3 +61,14 @@ def macd_bearish(df: pd.DataFrame) -> bool:
         return False
     h = df["macd_hist"]
     return float(h.iloc[-2]) < 0 and float(h.iloc[-3]) >= 0
+
+
+def adx_value(df: pd.DataFrame) -> float:
+    result = ta.adx(df["high"], df["low"], df["close"], length=config.ADX_PERIOD)
+    if result is None or result.empty:
+        return 0.0
+    col = [c for c in result.columns if c.startswith("ADX_")]
+    if not col:
+        return 0.0
+    val = result[col[0]].iloc[-2]
+    return float(val) if not pd.isna(val) else 0.0

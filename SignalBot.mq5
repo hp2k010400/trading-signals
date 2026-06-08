@@ -40,6 +40,11 @@ input int    SlCooldownMin    = 60;   // re-entry cooldown after SL (minutes)
 input int    MaxConsecutiveSL = 3;    // pause after this many SLs in a row
 input int    SlPauseHours     = 4;    // how long to pause after hitting the limit
 
+input bool   UseH1Filter  = true;    // only trade in H1 EMA trend direction
+input bool   UseAdxFilter = true;    // skip signals when market is ranging
+input int    AdxPeriod    = 14;
+input double AdxMin       = 20.0;    // ADX below this = ranging, no trade
+
 input bool   AutoExecute = true;
 
 input string Symbol1 = "XAUUSD.s";
@@ -310,6 +315,33 @@ void ProcessSymbol(string sym, int idx)
    if(emaF < emaS) trend = "bear";
    if(trend == "flat") return;
 
+   // H1 trend filter — only trade with the higher timeframe direction
+   if(UseH1Filter)
+   {
+      double h1F = GetEMATF(sym, EmaFast, PERIOD_H1, 1);
+      double h1S = GetEMATF(sym, EmaSlow, PERIOD_H1, 1);
+      if(h1F > 0 && h1S > 0)
+      {
+         string h1Trend = (h1F > h1S) ? "bull" : (h1F < h1S) ? "bear" : "flat";
+         if(h1Trend != "flat" && h1Trend != trend)
+         {
+            Print("[",sym,"] H1 filter blocked — M15:",trend," H1:",h1Trend);
+            return;
+         }
+      }
+   }
+
+   // ADX filter — skip signals when market is ranging
+   if(UseAdxFilter)
+   {
+      double adx = GetADX(sym, AdxPeriod, 1);
+      if(adx > 0 && adx < AdxMin)
+      {
+         Print("[",sym,"] ADX ",DoubleToString(adx,1)," < ",DoubleToString(AdxMin,0)," — ranging, skip");
+         return;
+      }
+   }
+
    double rsi = GetRSI(sym, RsiPeriod, 1);
    if(trend == "bull" && rsi > RsiOB) { Print("[",sym,"] RSI overbought ",DoubleToString(rsi,1)); return; }
    if(trend == "bear" && rsi < RsiOS) { Print("[",sym,"] RSI oversold ",DoubleToString(rsi,1));   return; }
@@ -463,6 +495,26 @@ double GetEMA(string sym, int period, int shift)
    if(h == INVALID_HANDLE) return 0;
    double b[]; ArraySetAsSeries(b, true);
    CopyBuffer(h, 0, shift, 1, b);
+   IndicatorRelease(h);
+   return b[0];
+}
+
+double GetEMATF(string sym, int period, ENUM_TIMEFRAMES tf, int shift)
+{
+   int h = iMA(sym, tf, period, 0, MODE_EMA, PRICE_CLOSE);
+   if(h == INVALID_HANDLE) return 0;
+   double b[]; ArraySetAsSeries(b, true);
+   CopyBuffer(h, 0, shift, 1, b);
+   IndicatorRelease(h);
+   return b[0];
+}
+
+double GetADX(string sym, int period, int shift)
+{
+   int h = iADX(sym, PERIOD_M15, period);
+   if(h == INVALID_HANDLE) return 0;
+   double b[]; ArraySetAsSeries(b, true);
+   CopyBuffer(h, 0, shift, 1, b);   // buffer 0 = ADX main line
    IndicatorRelease(h);
    return b[0];
 }

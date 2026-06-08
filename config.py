@@ -37,10 +37,16 @@ TARGET_EXPIRY_HOURS = 24      # drop a target if not hit within 24 hours
 EMA_FAST    = 10
 EMA_SLOW    = 20
 RSI_PERIOD  = 14
-RSI_OB      = 75   # loosened — don't block longs unless truly extreme
-RSI_OS      = 20   # loosened — don't block shorts unless truly extreme
+RSI_OB      = 75
+RSI_OS      = 20
 ATR_PERIOD       = 14
-EARLY_EXIT_POINTS = 5   # suggested early cut if trade moves against you quickly
+EARLY_EXIT_POINTS = 5
+ADX_PERIOD       = 14
+
+# ── Trend filters ─────────────────────────────────────────────────────────────
+USE_H1_FILTER  = True    # only trade M15 signals in the H1 trend direction
+USE_ADX_FILTER = True    # skip signals when ADX < ADX_MIN (ranging market)
+ADX_MIN        = 20.0    # below this = ranging, no trade
 
 # ── News filter ───────────────────────────────────────────────────────────────
 NEWS_PAUSE_MINUTES = 30
