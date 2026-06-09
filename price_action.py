@@ -62,13 +62,21 @@ def all_levels(df: pd.DataFrame) -> list[float]:
     return sorted(levels)
 
 
-def find_tp(current_price: float, direction: str, levels: list[float]) -> float | None:
+def find_entry_level(price: float, levels: list[float], tolerance: float) -> float | None:
+    """Return the nearest S/R level within tolerance of price, or None."""
+    candidates = [l for l in levels if abs(price - l) <= tolerance]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda l: abs(price - l))
+
+
+def find_tp(current_price: float, direction: str, levels: list[float], min_dist: float | None = None) -> float | None:
     """
-    Find the nearest S/R level in the trade direction that is at least
-    SL_POINTS + TP_BUFFER away (so R:R is always positive).
+    Find the nearest S/R level in the trade direction at least min_dist away.
     Returns the level minus TP_BUFFER (to close just before resistance hits).
     """
-    min_dist = config.SL_POINTS + config.TP_BUFFER
+    if min_dist is None:
+        min_dist = config.SL_POINTS + config.TP_BUFFER
     if direction == "bull":
         candidates = [l for l in levels if l > current_price + min_dist]
         return (min(candidates) - config.TP_BUFFER) if candidates else None

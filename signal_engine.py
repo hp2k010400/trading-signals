@@ -34,7 +34,7 @@ class Signal:
     sl_points:   float = config.SL_POINTS
 
 
-def _lot_size(symbol: str, confirmations: int) -> float:
+def _lot_size(symbol: str, confirmations: int, sl_distance: float) -> float:
     if confirmations >= 3:
         risk_pct = config.RISK_PCT_TIER_3
     elif confirmations == 2:
@@ -42,7 +42,7 @@ def _lot_size(symbol: str, confirmations: int) -> float:
     else:
         risk_pct = config.RISK_PCT_TIER_1
     risk_usd = config.ACCOUNT_BALANCE * (risk_pct / 100)
-    return data_client.calc_lot_size(symbol, config.SL_POINTS, risk_usd)
+    return data_client.calc_lot_size(symbol, sl_distance, risk_usd)
 
 
 def _early_exit(entry: float, action: str) -> float:
@@ -111,7 +111,7 @@ def evaluate(symbol: str) -> Signal | None:
 
             tgt.add_dca_entry(symbol, entry)
             action = "BUY" if active.direction == "bull" else "SELL"
-            lots   = _lot_size(symbol, 2)   # pyramid entries always tier 2
+            lots   = _lot_size(symbol, 2, config.SL_POINTS)   # DCA uses fixed SL
 
             return Signal(
                 symbol        = symbol,
@@ -176,18 +176,29 @@ def evaluate(symbol: str) -> Signal | None:
     if pattern is None:
         pattern = "MACD Cross" if macd_ok else "RSI Momentum"
 
-    # ── Find S/R TP target ────────────────────────────────────────────────────
+    # ── Require price to be AT an S/R level ──────────────────────────────────
     levels = pa.all_levels(df)
-    tp = pa.find_tp(price, trend, levels)
+    entry_level = pa.find_entry_level(price, levels, config.ENTRY_LEVEL_TOLERANCE)
+    if entry_level is None:
+        print(f"  [{symbol}] No signal — {trend} {pattern} but price not near any S/R level | Price {price:.2f}")
+        return None
+
+    # ── Structure-based SL — just beyond the entry level ─────────────────────
+    if trend == "bull":
+        sl = min(entry_level - config.SL_BUFFER, price - config.MIN_SL_POINTS)
+    else:
+        sl = max(entry_level + config.SL_BUFFER, price + config.MIN_SL_POINTS)
+    sl_distance = round(abs(price - sl), 2)
+
+    # ── Find TP — must be at least sl_distance + buffer away ─────────────────
+    tp = pa.find_tp(price, trend, levels, sl_distance + config.TP_BUFFER)
     if tp is None:
-        print(f"  [{symbol}] No signal — {trend} {pattern} but no S/R level found | Price {price:.2f}")
+        print(f"  [{symbol}] No signal — {trend} {pattern} near {entry_level:.2f} but no TP found | Price {price:.2f}")
         return None
 
     entry = price
-    sl    = (entry - config.SL_POINTS) if trend == "bull" else (entry + config.SL_POINTS)
-
     action = "BUY" if trend == "bull" else "SELL"
-    lots   = _lot_size(symbol, 1 if counter_trend else confirmations)
+    lots   = _lot_size(symbol, 1 if counter_trend else confirmations, sl_distance)
     sig    = Signal(
         symbol        = symbol,
         action        = action,
@@ -199,6 +210,7 @@ def evaluate(symbol: str) -> Signal | None:
         pattern       = pattern,
         entry_num     = 1,
         tp_points     = round(abs(tp - entry), 2),
+        sl_points     = sl_distance,
         confirmations = confirmations,
         early_exit    = _early_exit(round(entry, 2), action),
     )

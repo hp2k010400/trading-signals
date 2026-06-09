@@ -25,7 +25,7 @@ def send_signal(sig: Signal):
     else:
         header = f"<b>{direction} — {sig.symbol}  [DCA Entry {sig.entry_num}/3]</b>"
 
-    loss_usd  = round(sig.lots * config.SL_POINTS * 100, 0)
+    loss_usd  = round(sig.lots * sig.sl_points * 100, 0)
     win_usd   = round(sig.lots * sig.tp_points * 100, 0)
     stars     = "⭐" * sig.confirmations
 
