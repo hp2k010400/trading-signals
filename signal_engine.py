@@ -91,18 +91,11 @@ def evaluate(symbol: str) -> Signal | None:
     active = tgt.get(symbol)
 
     if active:
-        # Check if TP has been hit
-        if active.tp_hit(price):
-            print(f"  [{symbol}] TP hit at {active.tp:.2f} — clearing target")
-            tgt.clear(symbol)
-            return None
-
-        # Check if trend is still valid for existing target
+        # Check if trend is still valid — if reversed, stop adding DCA entries
+        # but leave the target in place so _check_exits() can still fire TP/SL notifications
         trend = ind.trend_direction(df)
-        active_trend = "bull" if active.direction == "bull" else "bear"
         if trend != active.direction:
-            print(f"  [{symbol}] Trend reversed — clearing target")
-            tgt.clear(symbol)
+            print(f"  [{symbol}] Trend reversed — holding target for exit detection, no new entries")
             return None
 
         # Fire a DCA entry only if price pulled back AND there's still meaningful room to TP
