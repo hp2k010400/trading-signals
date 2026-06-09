@@ -24,13 +24,13 @@ RISK_PCT_TIER_2     = 0.40    # 2 confirmations (RSI + pattern OR MACD)
 RISK_PCT_TIER_3     = 0.50    # 3 confirmations (RSI + pattern + MACD)
 
 # ── SL/TP settings ────────────────────────────────────────────────────────────
-SL_POINTS           = 7       # tight SL matching friend's actual losses (5-7 pts)
+SL_POINTS           = 12      # widened from 7 — clears normal Gold M15 wick noise
 TP_BUFFER           = 2       # place TP 2 pts before the S/R level
 ROUND_NUMBER_STEP   = 25      # gold clusters around every 25 points
 
 # ── Multi-entry (DCA) settings ────────────────────────────────────────────────
 MAX_ENTRIES         = 3       # max entries toward same target
-ENTRY_SEPARATION    = 5       # min points of pullback before adding next entry
+ENTRY_SEPARATION    = 8       # min points of pullback before adding next entry
 TARGET_EXPIRY_HOURS = 24      # drop a target if not hit within 24 hours
 
 # ── Indicators ────────────────────────────────────────────────────────────────
