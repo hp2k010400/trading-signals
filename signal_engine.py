@@ -137,6 +137,18 @@ def evaluate(symbol: str) -> Signal | None:
         print(f"  [{symbol}] No signal — trend flat | RSI {rsi:.1f} | Price {price:.2f}")
         return None
 
+    # H4 daily bias filter — hard block, no trades against H4 trend at all
+    if config.USE_H4_BIAS:
+        try:
+            df_h4 = data_client.get_bars(symbol, "H4", 50)
+            df_h4 = ind.enrich(df_h4)
+            h4_trend = ind.trend_direction(df_h4)
+            if h4_trend != "flat" and h4_trend != trend:
+                print(f"  [{symbol}] H4 bias {h4_trend} — skipping {trend} signal")
+                return None
+        except Exception:
+            pass
+
     # H1 trend filter — counter-trend = tier 1 only, no DCA
     counter_trend = False
     if config.USE_H1_FILTER:
