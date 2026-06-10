@@ -180,38 +180,37 @@ void ManageBreakeven()
    }
 }
 
-void CheckCircuitBreaker()
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
 {
-   // Scan last 10 closed deals for consecutive SL losses
-   if(!HistorySelect(TimeCurrent()-86400, TimeCurrent())) return;
-   int consec = 0;
-   datetime lastLoss = 0;
-   for(int d = HistoryDealsTotal()-1; d >= 0 && consec <= CBConsecLosses; d--)
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
+   if(!HistoryDealSelect(trans.deal)) return;
+   if(HistoryDealGetInteger(trans.deal, DEAL_MAGIC)  != 20250605)   return;
+   if(HistoryDealGetInteger(trans.deal, DEAL_ENTRY)  != DEAL_ENTRY_OUT) return;
+   double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
+   string sym    = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+   if(profit < 0)
    {
-      ulong ticket = HistoryDealGetTicket(d);
-      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != 20250605) continue;
-      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
-      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
-      if(profit < 0) { consec++; if(lastLoss==0) lastLoss=(datetime)HistoryDealGetInteger(ticket,DEAL_TIME); }
-      else           { break; }
+      g_consecLosses++;
+      Print("[CB] Consecutive losses: ", g_consecLosses);
+      if(g_consecLosses >= CBConsecLosses && g_pauseUntil <= TimeCurrent())
+      {
+         g_pauseUntil = TimeCurrent() + CBPauseMinutes * 60;
+         Print("[CB] Triggered — pausing until ", TimeToString(g_pauseUntil));
+         SendTelegram("⛔ <b>Circuit Breaker — "+sym+"</b>\n"
+            +IntegerToString(g_consecLosses)+" consecutive losses.\n"
+            +"Pausing "+IntegerToString(CBPauseMinutes)+" mins — resumes "
+            +TimeToString(g_pauseUntil, TIME_MINUTES));
+      }
    }
-   if(consec >= CBConsecLosses && g_pauseUntil <= TimeCurrent())
-   {
-      g_pauseUntil = TimeCurrent() + CBPauseMinutes * 60;
-      g_consecLosses = consec;
-      string msg = "⛔ <b>Circuit Breaker — "+IntegerToString(consec)+" consecutive losses</b>\n"
-                 + "Pausing new signals for "+IntegerToString(CBPauseMinutes)+" minutes.\n"
-                 + "Resumes: "+TimeToString(g_pauseUntil, TIME_MINUTES);
-      Print("[CB] Triggered — pausing until ", TimeToString(g_pauseUntil));
-      SendTelegram(msg);
-   }
+   else { g_consecLosses = 0; }
 }
 
 void OnTimer()
 {
    Print("[v3.1] Timer fired at ", TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS));
    ManageBreakeven();
-   CheckCircuitBreaker();
    if(g_pauseUntil > TimeCurrent())
    {
       Print("[CB] Paused until ", TimeToString(g_pauseUntil, TIME_MINUTES));
