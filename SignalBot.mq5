@@ -117,6 +117,27 @@ int OnInit()
       }
    }
 
+   // Restore circuit breaker state from today's deal history
+   g_consecLosses = 0;
+   if(HistorySelect(TimeCurrent()-86400, TimeCurrent()))
+   {
+      for(int d = HistoryDealsTotal()-1; d >= 0; d--)
+      {
+         ulong tk = HistoryDealGetTicket(d);
+         if(HistoryDealGetInteger(tk, DEAL_MAGIC) != 20250605) continue;
+         if(HistoryDealGetInteger(tk, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+         double p = HistoryDealGetDouble(tk, DEAL_PROFIT);
+         if(p < 0) g_consecLosses++;
+         else      break;
+      }
+   }
+   if(g_consecLosses >= CBConsecLosses)
+   {
+      g_pauseUntil = TimeCurrent() + CBPauseMinutes * 60;
+      Print("[CB] Startup: ",g_consecLosses," consecutive losses — pausing until ",TimeToString(g_pauseUntil));
+   }
+   else Print("[CB] Startup: ",g_consecLosses," consecutive losses — OK");
+
    EventSetTimer(PollSeconds);
    Print("[SignalBot v3.1] Started");
    SendTelegram("✅ <b>MT5 Signal Bot v3.1 Active</b>\n"
