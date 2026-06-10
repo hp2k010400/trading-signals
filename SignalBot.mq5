@@ -25,7 +25,8 @@ input int    MinSlPoints      = 8;
 input int    BreakEvenPts     = 8;   // pts in profit before SL moves to entry
 input int    MinLevelTouches  = 2;   // level must be tested this many times to be valid
 input int    LevelTouchTol    = 3;   // pts tolerance when counting level touches
-input int    SignalCooldownMin = 15; // mins between fresh signals after any close
+input int    CooldownAfterWin  = 5;  // mins cooldown after a winning trade
+input int    CooldownAfterLoss = 15; // mins cooldown after a losing trade
 
 input int    SlPoints    = 12;
 input int    TpBuffer    = 2;
@@ -79,7 +80,8 @@ void   ClearState(int idx)
 //── Circuit breaker state ─────────────────────────────────────────────
 int      g_consecLosses  = 0;
 datetime g_pauseUntil    = 0;
-datetime g_lastClosedAt  = 0;  // cooldown: time last trade closed
+datetime g_lastClosedAt  = 0;
+bool     g_lastWasWin    = false;
 
 //── News cache ────────────────────────────────────────────────────────
 string   newsCache   = "";
@@ -216,6 +218,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
    string sym    = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
    g_lastClosedAt = TimeCurrent();
+   g_lastWasWin   = (profit >= 0);
    if(profit < 0)
    {
       g_consecLosses++;
@@ -458,11 +461,17 @@ void ProcessSymbol(string sym, int idx)
    string stars=""; for(int s=0;s<confs;s++) stars+="⭐";
    if(!candleOk) patternName=macdOk?"MACD Cross":"RSI Momentum";
 
-   // Signal cooldown — don't re-enter immediately after any close
-   if(g_lastClosedAt > 0 && (TimeCurrent()-g_lastClosedAt) < SignalCooldownMin*60)
+   // Signal cooldown — 5 mins after win, 15 mins after loss
+   if(g_lastClosedAt > 0)
    {
-      Print("[",sym,"] Cooldown active — ",IntegerToString((int)((SignalCooldownMin*60-(TimeCurrent()-g_lastClosedAt))/60))," mins remaining");
-      return;
+      int cooldown = g_lastWasWin ? CooldownAfterWin*60 : CooldownAfterLoss*60;
+      int elapsed  = (int)(TimeCurrent() - g_lastClosedAt);
+      if(elapsed < cooldown)
+      {
+         Print("[",sym,"] Cooldown (",g_lastWasWin?"win":"loss",") — ",
+               IntegerToString((cooldown-elapsed)/60)," mins remaining");
+         return;
+      }
    }
 
    double entryLevel=FindEntryLevel(sym,price,bars);
