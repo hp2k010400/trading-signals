@@ -19,10 +19,13 @@ input double RiskPct1  = 0.25;
 input double RiskPct2  = 0.40;
 input double RiskPct3  = 0.50;
 
-input int    EntryLevelTol = 5;
-input int    SlBuffer      = 3;
-input int    MinSlPoints   = 8;
-input int    BreakEvenPts  = 8;  // pts in profit before SL moves to entry
+input int    EntryLevelTol    = 5;
+input int    SlBuffer         = 3;
+input int    MinSlPoints      = 8;
+input int    BreakEvenPts     = 8;   // pts in profit before SL moves to entry
+input int    MinLevelTouches  = 2;   // level must be tested this many times to be valid
+input int    LevelTouchTol    = 3;   // pts tolerance when counting level touches
+input int    SignalCooldownMin = 15; // mins between fresh signals after any close
 
 input int    SlPoints    = 12;
 input int    TpBuffer    = 2;
@@ -76,6 +79,7 @@ void   ClearState(int idx)
 //── Circuit breaker state ─────────────────────────────────────────────
 int      g_consecLosses  = 0;
 datetime g_pauseUntil    = 0;
+datetime g_lastClosedAt  = 0;  // cooldown: time last trade closed
 
 //── News cache ────────────────────────────────────────────────────────
 string   newsCache   = "";
@@ -211,6 +215,7 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    if(HistoryDealGetInteger(trans.deal, DEAL_ENTRY)  != DEAL_ENTRY_OUT) return;
    double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
    string sym    = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
+   g_lastClosedAt = TimeCurrent();
    if(profit < 0)
    {
       g_consecLosses++;
@@ -281,6 +286,25 @@ double CalcLots(int confs, double slDist)
    double lots = riskAmt / (slDist * 100.0);
    lots = MathRound(lots / 0.01) * 0.01;
    return MathMax(0.01, MathMin(5.0, lots));
+}
+
+//── Level strength — count how many times price has tested a level ────
+int LevelStrength(double level, string trend, MqlRates &bars[])
+{
+   int touches = 0;
+   int lookback = MathMin(100, ArraySize(bars));
+   for(int i = 1; i < lookback; i++)
+   {
+      if(trend == "bear")
+      {
+         if(MathAbs(bars[i].high - level) <= LevelTouchTol) touches++;
+      }
+      else
+      {
+         if(MathAbs(bars[i].low - level) <= LevelTouchTol) touches++;
+      }
+   }
+   return touches;
 }
 
 //── S/R entry level finder ────────────────────────────────────────────
@@ -434,8 +458,24 @@ void ProcessSymbol(string sym, int idx)
    string stars=""; for(int s=0;s<confs;s++) stars+="⭐";
    if(!candleOk) patternName=macdOk?"MACD Cross":"RSI Momentum";
 
+   // Signal cooldown — don't re-enter immediately after any close
+   if(g_lastClosedAt > 0 && (TimeCurrent()-g_lastClosedAt) < SignalCooldownMin*60)
+   {
+      Print("[",sym,"] Cooldown active — ",IntegerToString((int)((SignalCooldownMin*60-(TimeCurrent()-g_lastClosedAt))/60))," mins remaining");
+      return;
+   }
+
    double entryLevel=FindEntryLevel(sym,price,bars);
    if(entryLevel==0) { Print("[",sym,"] Price not near any S/R level — skip | Price ",DoubleToString(price,2)); return; }
+
+   // Level strength — only enter on levels tested 2+ times
+   int lvlStrength=LevelStrength(entryLevel,trend,bars);
+   if(lvlStrength < MinLevelTouches)
+   {
+      Print("[",sym,"] Level ",DoubleToString(entryLevel,2)," too weak (",lvlStrength," touch) — skip");
+      return;
+   }
+   Print("[",sym,"] Level ",DoubleToString(entryLevel,2)," strength: ",lvlStrength," touches ✓");
 
    double exPrc=(trend=="bull")?tick.ask:tick.bid;
    double structSl=(trend=="bull")?entryLevel-SlBuffer:entryLevel+SlBuffer;
