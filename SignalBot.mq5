@@ -133,8 +133,8 @@ int OnInit()
          if(HistoryDealGetInteger(tk, DEAL_MAGIC) != 20250605) continue;
          if(HistoryDealGetInteger(tk, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
          double p = HistoryDealGetDouble(tk, DEAL_PROFIT);
-         if(p < 0) g_consecLosses++;
-         else      break;
+         if(p < 0 && MathAbs(p) > 5.0) g_consecLosses++;
+         else if(p >= 0 || MathAbs(p) <= 5.0) break;
       }
    }
    if(g_consecLosses >= CBConsecLosses)
@@ -218,8 +218,9 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
    double profit = HistoryDealGetDouble(trans.deal, DEAL_PROFIT);
    string sym    = HistoryDealGetString(trans.deal, DEAL_SYMBOL);
    g_lastClosedAt = TimeCurrent();
-   g_lastWasWin   = (profit >= 0);
-   if(profit < 0)
+   bool isBreakeven = (MathAbs(profit) <= 5.0);
+   g_lastWasWin   = (profit >= 0 || isBreakeven);
+   if(profit < 0 && !isBreakeven)
    {
       g_consecLosses++;
       Print("[CB] Consecutive losses: ", g_consecLosses);
