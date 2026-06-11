@@ -82,6 +82,7 @@ void   ClearState(int idx)
 int      g_consecLosses  = 0;
 datetime g_pauseUntil    = 0;
 datetime g_lastClosedAt  = 0;
+datetime g_lastSignalRun = 0;
 bool     g_lastWasWin    = false;
 
 //── News cache ────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ int OnInit()
    }
    else Print("[CB] Startup: ",g_consecLosses," consecutive losses — OK");
 
-   EventSetTimer(PollSeconds);
+   EventSetTimer(60); // 60s timer — ManageBreakeven/trail runs every minute, signals every PollSeconds
    Print("[SignalBot v3.1] Started");
    SendTelegram("✅ <b>MT5 Signal Bot v3.1 Active</b>\n"
       + "Account: " + AccountInfoString(ACCOUNT_NAME) + "\n"
@@ -261,8 +262,14 @@ void OnTradeTransaction(const MqlTradeTransaction &trans,
 
 void OnTimer()
 {
-   Print("[v3.1] Timer fired at ", TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS));
+   // Breakeven + trailing runs every 60 seconds
    ManageBreakeven();
+
+   // Signal evaluation runs every PollSeconds (default 300)
+   if((TimeCurrent() - g_lastSignalRun) < PollSeconds) return;
+   g_lastSignalRun = TimeCurrent();
+
+   Print("[v3.1] Timer fired at ", TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS));
    if(g_pauseUntil > TimeCurrent())
    {
       Print("[CB] Paused until ", TimeToString(g_pauseUntil, TIME_MINUTES));
