@@ -23,6 +23,7 @@ input int    EntryLevelTol    = 5;
 input int    SlBuffer         = 3;
 input int    MinSlPoints      = 8;
 input int    BreakEvenPts     = 8;   // pts in profit before SL moves to entry
+input int    TrailPts         = 12;  // trailing stop distance once breakeven active
 input int    MinLevelTouches  = 2;   // level must be tested this many times to be valid
 input int    LevelTouchTol    = 3;   // pts tolerance when counting level touches
 input int    CooldownAfterWin  = 5;  // mins cooldown after a winning trade
@@ -182,14 +183,26 @@ void ManageBreakeven()
       string sym   = PositionGetString(POSITION_SYMBOL);
       MqlTick tick;
       if(!SymbolInfoTick(sym, tick)) continue;
+
       if(pType == POSITION_TYPE_SELL)
       {
+         // Step 1 — breakeven: lock SL to entry once 8pts in profit
          if(tick.bid <= entry - BreakEvenPts && curSL > entry)
          {
             if(trade.PositionModify(ticket, entry, curTP))
             {
                Print("[BE] SELL breakeven locked @ ",DoubleToString(entry,2)," #",ticket);
                SendTelegram("🔒 <b>Breakeven Set — "+sym+"</b>\nSL moved to entry "+DoubleToString(entry,2));
+            }
+         }
+         // Step 2 — trail: once SL is at or below entry, trail 12pts behind price
+         else if(curSL <= entry)
+         {
+            double trailSL = tick.bid + TrailPts;
+            if(trailSL < curSL)
+            {
+               if(trade.PositionModify(ticket, trailSL, curTP))
+                  Print("[Trail] SELL SL trailed to ",DoubleToString(trailSL,2)," #",ticket);
             }
          }
       }
@@ -201,6 +214,15 @@ void ManageBreakeven()
             {
                Print("[BE] BUY breakeven locked @ ",DoubleToString(entry,2)," #",ticket);
                SendTelegram("🔒 <b>Breakeven Set — "+sym+"</b>\nSL moved to entry "+DoubleToString(entry,2));
+            }
+         }
+         else if(curSL >= entry)
+         {
+            double trailSL = tick.ask - TrailPts;
+            if(trailSL > curSL)
+            {
+               if(trade.PositionModify(ticket, trailSL, curTP))
+                  Print("[Trail] BUY SL trailed to ",DoubleToString(trailSL,2)," #",ticket);
             }
          }
       }
