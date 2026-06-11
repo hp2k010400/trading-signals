@@ -553,6 +553,14 @@ void ProcessSymbol(string sym, int idx)
    double entryLevel=FindEntryLevel(sym,price,bars);
    if(entryLevel==0) { Print("[",sym,"] Price not near any S/R level — skip | Price ",DoubleToString(price,2)); return; }
 
+   // Minimum level distance — level must be 5pts+ away from entry in right direction
+   double levelDist = (trend=="bull") ? price - entryLevel : entryLevel - price;
+   if(levelDist < 5.0)
+   {
+      Print("[",sym,"] Level ",DoubleToString(entryLevel,2)," too close (",DoubleToString(levelDist,1),"pts) — skip");
+      return;
+   }
+
    // Level strength — only enter on levels tested 2+ times
    int lvlStrength=LevelStrength(entryLevel,trend,bars);
    if(lvlStrength < MinLevelTouches)
