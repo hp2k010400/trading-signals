@@ -67,9 +67,12 @@ def run():
             allowed, risk_msg = risk_manager.is_trading_allowed()
             if not allowed:
                 print(f"[{now}] Risk blocked: {risk_msg}")
-                telegram_bot.send_risk_warning(risk_msg)
+                if not getattr(main, '_cb_notified', False):
+                    telegram_bot.send_risk_warning(risk_msg)
+                    main._cb_notified = True
                 time.sleep(60)
                 continue
+            main._cb_notified = False  # reset when trading resumes
 
             _check_exits()
 
