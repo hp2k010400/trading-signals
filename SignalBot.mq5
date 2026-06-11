@@ -49,6 +49,8 @@ input int    CBConsecLosses    = 2;   // consecutive losses before circuit break
 input int    CBPauseMinutes    = 45;  // minutes to pause after trigger
 input bool   AutoExecute  = true;
 input bool   UseH4Bias    = true;  // daily bias — only trade in H4 trend direction
+input bool   UseH4ADX     = true;  // require H4 ADX > threshold (trending market only)
+input int    H4ADXMin     = 25;    // minimum H4 ADX to allow signals
 
 input string Symbol1 = "XAUUSD";
 input string Symbol2 = "";
@@ -64,6 +66,7 @@ int g_rsi[NUM_SYMBOLS];
 int g_macd[NUM_SYMBOLS];
 int g_h4EmaFast[NUM_SYMBOLS];
 int g_h4EmaSlow[NUM_SYMBOLS];
+int g_h4Adx[NUM_SYMBOLS];
 
 //── State ─────────────────────────────────────────────────────────────
 string StateKey(int idx, string field) { return "SB_" + IntegerToString(idx) + "_" + field; }
@@ -121,6 +124,7 @@ int OnInit()
          g_macd[i]      = iMACD(Symbols[i],PERIOD_M15, 12, 26, 9, PRICE_CLOSE);
          g_h4EmaFast[i] = iMA(Symbols[i],  PERIOD_H4,  EmaFast,   0, MODE_EMA, PRICE_CLOSE);
          g_h4EmaSlow[i] = iMA(Symbols[i],  PERIOD_H4,  EmaSlow,   0, MODE_EMA, PRICE_CLOSE);
+         g_h4Adx[i]     = iADX(Symbols[i], PERIOD_H4,  14);
          Print("[SignalBot v3.1] Handles for ", Symbols[i],
                " EMA:", g_emaFast[i], "/", g_emaSlow[i],
                " RSI:", g_rsi[i], " MACD:", g_macd[i],
@@ -170,6 +174,7 @@ void OnDeinit(const int reason)
       if(g_macd[i]       != INVALID_HANDLE) IndicatorRelease(g_macd[i]);
       if(g_h4EmaFast[i]  != INVALID_HANDLE) IndicatorRelease(g_h4EmaFast[i]);
       if(g_h4EmaSlow[i]  != INVALID_HANDLE) IndicatorRelease(g_h4EmaSlow[i]);
+      if(g_h4Adx[i]      != INVALID_HANDLE) IndicatorRelease(g_h4Adx[i]);
    }
 }
 
@@ -500,6 +505,19 @@ void ProcessSymbol(string sym, int idx)
          string h4Trend=(h4F>h4S)?"bull":"bear";
          if(h4Trend!=trend)
          { Print("[",sym,"] H4 bias ",h4Trend," — skipping ",trend," signal"); return; }
+      }
+   }
+
+   // H4 ADX filter — only trade when market is genuinely trending
+   if(UseH4ADX && g_h4Adx[idx] != INVALID_HANDLE)
+   {
+      double adxBuf[]; ArraySetAsSeries(adxBuf, true);
+      if(CopyBuffer(g_h4Adx[idx], 0, 1, 1, adxBuf) >= 1)
+      {
+         double h4Adx = adxBuf[0];
+         if(h4Adx < H4ADXMin)
+         { Print("[",sym,"] H4 ADX ",DoubleToString(h4Adx,1)," < ",H4ADXMin," — ranging market, skip"); return; }
+         Print("[",sym,"] H4 ADX ",DoubleToString(h4Adx,1)," ✓");
       }
    }
 
