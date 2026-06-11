@@ -24,6 +24,7 @@ input int    SlBuffer         = 3;
 input int    MinSlPoints      = 8;
 input int    BreakEvenPts     = 8;   // pts in profit before SL moves to entry
 input int    TrailPts         = 12;  // trailing stop distance once breakeven active
+input int    PartialClosePts  = 15;  // pts in profit to close 50% and move SL to entry
 input int    MinLevelTouches  = 2;   // level must be tested this many times to be valid
 input int    LevelTouchTol    = 3;   // pts tolerance when counting level touches
 input int    CooldownAfterWin  = 5;  // mins cooldown after a winning trade
@@ -83,6 +84,8 @@ int      g_consecLosses  = 0;
 datetime g_pauseUntil    = 0;
 datetime g_lastClosedAt  = 0;
 datetime g_lastSignalRun = 0;
+ulong    g_partialDone[10];  // tickets that have already had partial close
+int      g_partialCount = 0;
 bool     g_lastWasWin    = false;
 
 //── News cache ────────────────────────────────────────────────────────
@@ -184,6 +187,31 @@ void ManageBreakeven()
       string sym   = PositionGetString(POSITION_SYMBOL);
       MqlTick tick;
       if(!SymbolInfoTick(sym, tick)) continue;
+
+      // Partial close — 50% at 15pts profit, SL to entry on remainder
+      bool alreadyPartialed = false;
+      for(int x=0; x<g_partialCount; x++) if(g_partialDone[x]==ticket) { alreadyPartialed=true; break; }
+      if(!alreadyPartialed)
+      {
+         double profitPts = (pType==POSITION_TYPE_SELL) ? (entry-tick.bid) : (tick.ask-entry);
+         if(profitPts >= PartialClosePts)
+         {
+            double halfLots = MathRound((PositionGetDouble(POSITION_VOLUME)/2.0)/0.01)*0.01;
+            if(halfLots >= 0.01)
+            {
+               bool ok = (pType==POSITION_TYPE_SELL)
+                  ? trade.Sell(halfLots, sym, tick.bid, 0, 0, "partial-close")
+                  : trade.Buy( halfLots, sym, tick.ask, 0, 0, "partial-close");
+               if(ok)
+               {
+                  if(g_partialCount < 10) { g_partialDone[g_partialCount] = ticket; g_partialCount++; }
+                  trade.PositionModify(ticket, entry, curTP);
+                  Print("[PC] Partial close 50% @ ",DoubleToString(profitPts,1),"pts profit #",ticket);
+                  SendTelegram("💰 <b>Partial Close — "+sym+"</b>\n50% closed at +"+DoubleToString(profitPts,1)+"pts\nSL moved to entry, remainder running to TP");
+               }
+            }
+         }
+      }
 
       if(pType == POSITION_TYPE_SELL)
       {
