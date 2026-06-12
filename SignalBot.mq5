@@ -19,7 +19,8 @@ input double RiskPct1  = 0.25;
 input double RiskPct2  = 0.40;
 input double RiskPct3  = 0.50;
 
-input int    EntryLevelTol    = 5;
+input int    EntryLevelTol    = 10;
+input int    MinLevelDist     = 3;   // minimum pts between entry and level
 input int    SlBuffer         = 3;
 input int    MinSlPoints      = 8;
 input int    BreakEvenPts     = 8;   // pts in profit before SL moves to entry
@@ -555,7 +556,7 @@ void ProcessSymbol(string sym, int idx)
 
    // Minimum level distance — level must be 5pts+ away from entry in right direction
    double levelDist = (trend=="bull") ? price - entryLevel : entryLevel - price;
-   if(levelDist < 5.0)
+   if(levelDist < MinLevelDist)
    {
       Print("[",sym,"] Level ",DoubleToString(entryLevel,2)," too close (",DoubleToString(levelDist,1),"pts) — skip");
       return;
