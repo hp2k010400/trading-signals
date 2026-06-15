@@ -532,7 +532,8 @@ void ProcessSymbol(string sym, int idx)
    if(trend=="bull"){if(IsBullishEngulfing(bars)){candleOk=true;patternName="Bullish Engulfing";}if(IsBullishPinBar(bars)){candleOk=true;patternName="Bullish Pin Bar";}}
    else             {if(IsBearishEngulfing(bars)){candleOk=true;patternName="Bearish Engulfing";}if(IsBearishPinBar(bars)){candleOk=true;patternName="Bearish Pin Bar";}}
 
-   if(!candleOk&&!macdOk&&!rsiOk) { Print("[",sym,"] No confirmation — ",trend," | RSI ",DoubleToString(rsi,1)); return; }
+   // RSI alone is not enough — must have candle pattern or MACD cross
+   if(!candleOk&&!macdOk) { Print("[",sym,"] No confirmation — ",trend," | RSI ",DoubleToString(rsi,1)); return; }
 
    int    confs=(candleOk?1:0)+(macdOk?1:0)+(rsiOk?1:0);
    string stars=""; for(int s=0;s<confs;s++) stars+="⭐";
