@@ -70,3 +70,16 @@ RISK_PER_ENTRY_PCT  = 1.0  # % of account risked per trade (informational)
 # ── Engine ────────────────────────────────────────────────────────────────────
 POLL_INTERVAL_SECONDS = 300   # 5 minutes — fast enough to catch pyramid entries
 CANDLES_NEEDED        = 200
+
+# ── Range Bot ─────────────────────────────────────────────────────────────────
+USE_RANGE_BOT        = True
+RANGE_ADX_MAX        = 20     # H4 ADX below this = range mode (trend bot off)
+RANGE_LOOKBACK       = 30     # M15 bars to scan for range boundaries
+RANGE_MIN_WIDTH      = 20     # minimum range width in points
+RANGE_MAX_WIDTH      = 60     # maximum range width — wider means trending, not ranging
+RANGE_MIN_TOUCHES    = 2      # touches required on each boundary
+RANGE_MIN_BARS       = 8      # minimum bars fully contained in range
+RANGE_ENTRY_ZONE     = 8      # within X pts of boundary to consider entry
+RANGE_SL_PTS         = 12     # SL distance beyond range boundary
+RANGE_BREAKOUT_PTS   = 10     # candle close this far beyond range = confirmed breakout
+RANGE_RISK_PCT       = 0.20   # risk % per range trade (smaller than trend)

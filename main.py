@@ -2,7 +2,10 @@ import time
 import traceback
 from datetime import datetime, timezone
 
+import requests
+
 import signal_engine
+import range_engine
 import telegram_bot
 import news_filter
 import risk_manager
@@ -11,8 +14,39 @@ import data_client
 import config
 
 
+# ── Telegram helper (direct — doesn't rely on telegram_bot for range signals) ──
+_TG_API = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/sendMessage"
+
+def _send(text: str):
+    try:
+        requests.post(_TG_API, json={
+            "chat_id":    config.TELEGRAM_CHAT_ID,
+            "text":       text,
+            "parse_mode": "HTML",
+        }, timeout=5)
+    except Exception:
+        pass
+
+
+def _send_range_signal(sig: range_engine.RangeSignal):
+    emoji = "🟡" if sig.action == "BUY" else "🟠"
+    _send(
+        f"{emoji} <b>RANGE {sig.action} — {sig.symbol}</b>\n"
+        f"{'━' * 26}\n"
+        f"Entry:  <b>{sig.entry:.2f}</b>\n"
+        f"TP:     <b>{sig.tp:.2f}</b>  (+{sig.tp_pts:.1f}pts)\n"
+        f"SL:     <b>{sig.sl:.2f}</b>  (-{sig.sl_pts:.1f}pts)\n"
+        f"{'━' * 26}\n"
+        f"Range:  {sig.range_low:.2f} — {sig.range_high:.2f}  ({sig.range_width:.1f}pts)\n"
+        f"Lots:   <b>{sig.lots:.2f}</b>  R:R 1:{sig.rr:.2f}\n"
+        f"Signal: {sig.pattern}  RSI check ✓\n"
+        f"H4 ADX: {sig.adx:.1f} (range mode ✓)\n"
+        f"⚠️ Pre-NY close at 12:45 UTC if still open"
+    )
+
+
 def _check_exits():
-    """Notify if any active target has hit TP or SL since last poll."""
+    """Notify if any active trend target has hit TP or SL since last poll."""
     for symbol in list(config.SYMBOLS):
         active = tgt.get(symbol)
         if active is None:
@@ -45,9 +79,23 @@ def _market_open() -> bool:
     return True
 
 
+# ── Deduplication for range signals — don't fire same direction twice in a row ─
+_last_range: dict[str, str] = {}
+
+def _is_new_range(symbol: str, action: str) -> bool:
+    if _last_range.get(symbol) == action:
+        return False
+    _last_range[symbol] = action
+    return True
+
+def _reset_range(symbol: str):
+    _last_range[symbol] = ""
+
+
 def run():
     telegram_bot.send_startup()
     print(f"[Bot] Started — polling every {config.POLL_INTERVAL_SECONDS}s")
+    print(f"[Bot] Trend bot: H4 ADX > 25 | Range bot: H4 ADX < {config.RANGE_ADX_MAX}")
 
     while True:
         try:
@@ -78,11 +126,21 @@ def run():
 
             for symbol in config.SYMBOLS:
                 print(f"[{now}] Checking {symbol}...")
+
+                # ── Trend signal ─────────────────────────────────────────────
                 sig = signal_engine.evaluate(symbol)
                 if sig:
                     label = f"Entry {sig.entry_num}" if sig.entry_num > 1 else "Signal"
-                    print(f"  >> {label}: {sig.action} {symbol} | Entry {sig.entry:.2f} | TP {sig.tp:.2f} | Lots {sig.lots}")
+                    print(f"  >> TREND {label}: {sig.action} {symbol} | Entry {sig.entry:.2f} | TP {sig.tp:.2f}")
                     telegram_bot.send_signal(sig)
+
+                # ── Range signal ──────────────────────────────────────────────
+                rsig = range_engine.evaluate(symbol)
+                if rsig and _is_new_range(symbol, rsig.action):
+                    print(f"  >> RANGE: {rsig.action} {symbol} | Entry {rsig.entry:.2f} | Range {rsig.range_low:.2f}-{rsig.range_high:.2f}")
+                    _send_range_signal(rsig)
+                elif rsig is None:
+                    _reset_range(symbol)
 
         except KeyboardInterrupt:
             print("\n[Bot] Stopped.")
