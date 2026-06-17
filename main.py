@@ -28,6 +28,9 @@ def _send(text: str):
         pass
 
 
+_cb_notified = False
+
+
 def _send_range_signal(sig: range_engine.RangeSignal):
     emoji = "🟡" if sig.action == "BUY" else "🟠"
     _send(
@@ -115,12 +118,13 @@ def run():
             allowed, risk_msg = risk_manager.is_trading_allowed()
             if not allowed:
                 print(f"[{now}] Risk blocked: {risk_msg}")
-                if not getattr(main, '_cb_notified', False):
+                global _cb_notified
+                if not _cb_notified:
                     telegram_bot.send_risk_warning(risk_msg)
-                    main._cb_notified = True
+                    _cb_notified = True
                 time.sleep(60)
                 continue
-            main._cb_notified = False  # reset when trading resumes
+            _cb_notified = False  # reset when trading resumes
 
             _check_exits()
 
