@@ -1,231 +1,351 @@
 """
-Signal engine — rebuilt to match the Gold Signals group strategy:
+signal_engine.py — Detects signals for all five strategies.
 
-  1. Identify a key S/R level as the TP target
-  2. Enter when trend + momentum + candle pattern confirm direction
-  3. Allow up to 3 DCA entries toward the same target
-  4. Fixed 15-point SL on every entry
-  5. TP is the S/R level minus a small buffer
+Strategies (all use yfinance H1 data — no API key needed):
+  1. London Breakout   EURUSD, GBPUSD   07:00–10:00 UTC   daily
+  2. DAX ORB           GER40            09:00–12:00 UTC   daily
+  3. NAS100 US Open    NAS100           14:00–16:00 UTC   daily
+  4. DAX H4 EMA        GER40            08:00–16:00 UTC   1-2×/month
+  5. Oil H4 EMA        USOil            14:00–21:00 UTC   1×/month
+
+Each strategy fires at most once per day per instrument.
 """
-from dataclasses import dataclass
-import config
-import indicators as ind
-import price_action as pa
-import news_filter
-import risk_manager
-import data_client
-import targets as tgt
 
+from dataclasses import dataclass, field
+from datetime import datetime, timezone, date
+import pandas as pd
+import yfinance as yf
+import warnings
+warnings.filterwarnings('ignore')
+
+import config
+import risk_manager
+
+
+# ── Signal ─────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Signal:
-    symbol:        str
-    action:        str          # "BUY" | "SELL"
-    entry:         float
-    sl:            float
-    tp:            float
-    lots:          float
-    rr:            float
-    pattern:       str
-    entry_num:     int          # 1 = first entry, 2/3 = pyramid
-    confirmations: int          # 1-3 — drives lot size
-    early_exit:    float        # suggested early cut price
-    tp_points:   float
-    sl_points:   float = config.SL_POINTS
+    strategy:       str
+    symbol:         str           # MT5 symbol name
+    action:         str           # "BUY" or "SELL"
+    entry:          float
+    sl:             float
+    tp:             float         # = trail_activate (used by auto_trader.py)
+    trail_activate: float         # move SL to BE when price hits this
+    trail_distance: float         # then trail SL this many pts behind price
+    lots:           float         # calculated lot size
+    note:           str = ""
+    sl_points:      float = field(init=False)
+    risk_gbp:       float = field(init=False)
+
+    def __post_init__(self):
+        self.sl_points = round(abs(self.entry - self.sl), 5)
+        self.risk_gbp  = risk_manager.risk_gbp(self.strategy)
 
 
-def _lot_size(symbol: str, confirmations: int, sl_distance: float) -> float:
-    if confirmations >= 3:
-        risk_pct = config.RISK_PCT_TIER_3
-    elif confirmations == 2:
-        risk_pct = config.RISK_PCT_TIER_2
-    else:
-        risk_pct = config.RISK_PCT_TIER_1
-    risk_usd = config.ACCOUNT_BALANCE * (risk_pct / 100)
-    return data_client.calc_lot_size(symbol, sl_distance, risk_usd)
+# ── Deduplication (one signal per strategy per instrument per day) ─────────────
+
+_fired: dict[str, date] = {}
+
+def _fired_today(key: str) -> bool:
+    return _fired.get(key) == datetime.now(timezone.utc).date()
+
+def _mark(key: str):
+    _fired[key] = datetime.now(timezone.utc).date()
 
 
-def _early_exit(entry: float, action: str) -> float:
-    if action == "BUY":
-        return round(entry - config.EARLY_EXIT_POINTS, 2)
-    return round(entry + config.EARLY_EXIT_POINTS, 2)
+# ── Data ───────────────────────────────────────────────────────────────────────
 
-
-def _rr(entry, sl, tp) -> float:
-    risk   = abs(entry - sl)
-    reward = abs(tp - entry)
-    return round(reward / risk, 2) if risk > 0 else 0
-
-
-def evaluate(symbol: str) -> Signal | None:
-    # ── News & risk gates ─────────────────────────────────────────────────────
-    blocked, news_msg = news_filter.is_news_window()
-    if blocked:
-        print(f"  [{symbol}] News: {news_msg}")
-        return None
-
-    allowed, risk_msg = risk_manager.is_trading_allowed()
-    if not allowed:
-        print(f"  [{symbol}] Risk: {risk_msg}")
-        return None
-
-    cooled, cool_msg = risk_manager.in_sl_cooldown(symbol)
-    if cooled:
-        print(f"  [{symbol}] Cooldown: {cool_msg}")
-        return None
-
-    # ── Fetch data ────────────────────────────────────────────────────────────
+def _h1(yf_symbol: str, days: int = 30) -> pd.DataFrame | None:
     try:
-        df = ind.enrich(data_client.get_bars(symbol, config.PRIMARY_TF))
-        tick = data_client.get_tick(symbol)
+        df = yf.download(yf_symbol, interval="1h", period=f"{days}d",
+                         auto_adjust=True, progress=False)
+        if df is None or len(df) < 10:
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df.columns = [c.lower() for c in df.columns]
+        df = df.dropna()
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('UTC')
+        else:
+            df.index = df.index.tz_convert('UTC')
+        return df
     except Exception as e:
-        print(f"  [{symbol}] Data error: {e}")
+        print(f"  [data] {yf_symbol}: {e}")
         return None
 
-    if len(df) < 50:
-        return None
 
-    price = tick["ask"]   # use ask as reference; SL/TP calc same either side
+def _today() -> pd.Timestamp:
+    n = datetime.now(timezone.utc)
+    return pd.Timestamp(n.year, n.month, n.day, tz='UTC')
 
-    # ── Check if an active target needs a DCA entry ───────────────────────────
-    active = tgt.get(symbol)
 
-    if active:
-        # Check if trend is still valid — if reversed, stop adding DCA entries
-        # but leave the target in place so _check_exits() can still fire TP/SL notifications
-        trend = ind.trend_direction(df)
-        if trend != active.direction:
-            print(f"  [{symbol}] Trend reversed — holding target for exit detection, no new entries")
-            return None
-
-        # Fire a DCA entry only if price pulled back AND there's still meaningful room to TP
-        room_to_tp = abs(active.tp - price)
-        if not active.counter_trend and active.needs_dca(price) and not active.is_full() and room_to_tp >= config.SL_POINTS:
-            entry = price
-            if active.direction == "bull":
-                sl = entry - config.SL_POINTS
-                tp = active.tp
-            else:
-                sl = entry + config.SL_POINTS
-                tp = active.tp
-
-            tgt.add_dca_entry(symbol, entry)
-            action = "BUY" if active.direction == "bull" else "SELL"
-            lots   = _lot_size(symbol, 2, config.SL_POINTS)   # DCA uses fixed SL
-
-            return Signal(
-                symbol        = symbol,
-                action        = action,
-                entry         = round(entry, 2),
-                sl            = round(sl, 2),
-                tp            = round(tp, 2),
-                lots          = lots,
-                rr            = _rr(entry, sl, tp),
-                pattern       = "Pyramid Entry",
-                entry_num     = active.entry_count,
-                tp_points     = round(abs(tp - entry), 2),
-                confirmations = 2,
-                early_exit    = _early_exit(round(entry, 2), action),
-            )
-        return None
-
-    # ── No active target — look for a fresh signal ────────────────────────────
-    trend = ind.trend_direction(df)
-    rsi   = ind.rsi_value(df)
-
-    if trend == "flat":
-        print(f"  [{symbol}] No signal — trend flat | RSI {rsi:.1f} | Price {price:.2f}")
-        return None
-
-    # H4 daily bias filter — hard block, no trades against H4 trend at all
-    if config.USE_H4_BIAS:
-        try:
-            df_h4 = data_client.get_bars(symbol, "H4", 50)
-            df_h4 = ind.enrich(df_h4)
-            h4_trend = ind.trend_direction(df_h4)
-            if h4_trend != "flat" and h4_trend != trend:
-                print(f"  [{symbol}] H4 bias {h4_trend} — skipping {trend} signal")
-                return None
-        except Exception:
-            pass
-
-    # H1 trend filter — counter-trend = tier 1 only, no DCA
-    counter_trend = False
-    if config.USE_H1_FILTER:
-        try:
-            df_h1 = data_client.get_bars(symbol, "H1", 50)
-            df_h1 = ind.enrich(df_h1)
-            h1_trend = ind.trend_direction(df_h1)
-            if h1_trend != "flat" and h1_trend != trend:
-                counter_trend = True
-                print(f"  [{symbol}] H1 counter-trend — M15:{trend} H1:{h1_trend} — tier 1 only, no DCA")
-        except Exception:
-            pass
-
-    # ADX filter
-    if config.USE_ADX_FILTER:
-        adx = ind.adx_value(df)
-        if adx > 0 and adx < config.ADX_MIN:
-            print(f"  [{symbol}] ADX {adx:.1f} < {config.ADX_MIN} — ranging, skip")
-            return None
-    if trend == "bull" and rsi > config.RSI_OB:
-        print(f"  [{symbol}] No signal — RSI overbought {rsi:.1f}")
-        return None
-    if trend == "bear" and rsi < config.RSI_OS:
-        print(f"  [{symbol}] No signal — RSI oversold {rsi:.1f}")
-        return None
-
-    pattern = pa.bullish_pattern(df) if trend == "bull" else pa.bearish_pattern(df)
-    macd_ok = ind.macd_bullish(df)   if trend == "bull" else ind.macd_bearish(df)
-    rsi_ok  = (rsi < 50) if trend == "bear" else (rsi > 50)
-
-    if pattern is None and not macd_ok and not rsi_ok:
-        print(f"  [{symbol}] No signal — {trend} trend, no confirmation | RSI {rsi:.1f}")
-        return None
-
-    # Count confirmations → drives lot size
-    confirmations = sum([bool(pattern), macd_ok, rsi_ok])
-    if pattern is None:
-        pattern = "MACD Cross" if macd_ok else "RSI Momentum"
-
-    # ── Require price to be AT an S/R level ──────────────────────────────────
-    levels = pa.all_levels(df)
-    entry_level = pa.find_entry_level(price, levels, config.ENTRY_LEVEL_TOLERANCE)
-    if entry_level is None:
-        print(f"  [{symbol}] No signal — {trend} {pattern} but price not near any S/R level | Price {price:.2f}")
-        return None
-
-    # ── Structure-based SL — just beyond the entry level ─────────────────────
-    if trend == "bull":
-        sl = min(entry_level - config.SL_BUFFER, price - config.MIN_SL_POINTS)
-    else:
-        sl = max(entry_level + config.SL_BUFFER, price + config.MIN_SL_POINTS)
-    sl_distance = round(abs(price - sl), 2)
-
-    # ── Find TP — must be at least sl_distance + buffer away ─────────────────
-    tp = pa.find_tp(price, trend, levels, sl_distance + config.TP_BUFFER)
-    if tp is None:
-        print(f"  [{symbol}] No signal — {trend} {pattern} near {entry_level:.2f} but no TP found | Price {price:.2f}")
-        return None
-
-    entry = price
-    action = "BUY" if trend == "bull" else "SELL"
-    lots   = _lot_size(symbol, 1 if counter_trend else confirmations, sl_distance)
-    sig    = Signal(
-        symbol        = symbol,
-        action        = action,
-        entry         = round(entry, 2),
-        sl            = round(sl, 2),
-        tp            = round(tp, 2),
-        lots          = lots,
-        rr            = _rr(entry, sl, tp),
-        pattern       = pattern,
-        entry_num     = 1,
-        tp_points     = round(abs(tp - entry), 2),
-        sl_points     = sl_distance,
-        confirmations = confirmations,
-        early_exit    = _early_exit(round(entry, 2), action),
+def _make_signal(strategy, mt5_sym, action, entry, sl, trail_act, trail_dist) -> Signal:
+    lots = risk_manager.calc_lots(mt5_sym, abs(entry - sl), strategy)
+    return Signal(
+        strategy=strategy, symbol=mt5_sym, action=action,
+        entry=round(entry, 5), sl=round(sl, 5),
+        tp=round(trail_act, 5), trail_activate=round(trail_act, 5),
+        trail_distance=round(trail_dist, 5), lots=lots,
     )
 
-    tgt.set_target(symbol, trend, tp, entry, counter_trend=counter_trend)
-    return sig
+
+# ── 1. LONDON BREAKOUT ─────────────────────────────────────────────────────────
+
+def _london_breakout(now: datetime) -> list[Signal]:
+    if not (7 <= now.hour < 10):
+        return []
+
+    day  = _today()
+    prev = day - pd.Timedelta(days=1)
+    sigs = []
+
+    for yf_sym, mt5_sym, pip in [
+        ("EURUSD=X", config.MT5_SYMBOLS["EURUSD"], 0.0001),
+        ("GBPUSD=X", config.MT5_SYMBOLS["GBPUSD"], 0.0001),
+    ]:
+        key = f"LB_{mt5_sym}"
+        if _fired_today(key):
+            continue
+
+        df = _h1(yf_sym)
+        if df is None:
+            continue
+
+        asian = df[
+            (df.index >= prev + pd.Timedelta(hours=22)) &
+            (df.index <  day  + pd.Timedelta(hours=7))
+        ]
+        if len(asian) < 4:
+            continue
+
+        a_hi, a_lo = asian['high'].max(), asian['low'].min()
+        rng  = a_hi - a_lo
+        pips = rng / pip
+
+        if not (10 <= pips <= 100):
+            continue
+
+        london = df[
+            (df.index >= day + pd.Timedelta(hours=7)) &
+            (df.index <= day + pd.Timedelta(hours=now.hour))
+        ]
+        if len(london) == 0:
+            continue
+
+        hi_seen = london['high'].max()
+        lo_seen = london['low'].min()
+        buf     = rng * 0.15
+
+        if hi_seen > a_hi:
+            entry = a_hi
+            sl    = a_lo - buf
+            sig   = _make_signal("London Breakout", mt5_sym, "BUY",
+                                 entry, sl, entry + abs(entry - sl), rng)
+            sig.note = f"Asian range {pips:.0f} pips | trail {rng/pip:.0f} pips after +1R"
+            _mark(key); sigs.append(sig)
+
+        elif lo_seen < a_lo:
+            entry = a_lo
+            sl    = a_hi + buf
+            sig   = _make_signal("London Breakout", mt5_sym, "SELL",
+                                 entry, sl, entry - abs(sl - entry), rng)
+            sig.note = f"Asian range {pips:.0f} pips | trail {rng/pip:.0f} pips after +1R"
+            _mark(key); sigs.append(sig)
+
+    return sigs
+
+
+# ── 2. DAX OPENING RANGE BREAKOUT ─────────────────────────────────────────────
+
+def _dax_orb(now: datetime) -> list[Signal]:
+    if not (9 <= now.hour < 12):
+        return []
+    key = "DAX_ORB"
+    if _fired_today(key):
+        return []
+
+    df = _h1("^GDAXI")
+    if df is None:
+        return []
+
+    day   = _today()
+    orb_t = day + pd.Timedelta(hours=8)
+    rows  = df[df.index == orb_t]
+    if len(rows) == 0:
+        return []
+
+    orb = rows.iloc[0]
+    hi, lo, rng = orb['high'], orb['low'], orb['high'] - orb['low']
+    if not (30 <= rng <= 300):
+        return []
+
+    since = df[
+        (df.index >= day + pd.Timedelta(hours=9)) &
+        (df.index <= day + pd.Timedelta(hours=now.hour))
+    ]
+    if len(since) == 0:
+        return []
+
+    trail = rng * 0.5
+    mt5   = config.MT5_SYMBOLS["DAX"]
+
+    if since['high'].max() > hi:
+        sig = _make_signal("DAX ORB", mt5, "BUY", hi, lo, hi + (hi - lo), trail)
+        sig.note = f"ORB {rng:.0f}pts | trail {trail:.0f}pts after +1R"
+        _mark(key); return [sig]
+
+    if since['low'].min() < lo:
+        sig = _make_signal("DAX ORB", mt5, "SELL", lo, hi, lo - (hi - lo), trail)
+        sig.note = f"ORB {rng:.0f}pts | trail {trail:.0f}pts after +1R"
+        _mark(key); return [sig]
+
+    return []
+
+
+# ── 3. NAS100 US OPEN ──────────────────────────────────────────────────────────
+
+def _nas100_open(now: datetime) -> list[Signal]:
+    if not (14 <= now.hour < 16):
+        return []
+    key = "NAS_OPEN"
+    if _fired_today(key):
+        return []
+
+    df = _h1("NQ=F")
+    if df is None:
+        return []
+
+    day   = _today()
+    ref_t = day + pd.Timedelta(hours=13)
+    rows  = df[df.index == ref_t]
+    if len(rows) == 0:
+        return []
+
+    ref = rows.iloc[0]
+    hi, lo, rng = ref['high'], ref['low'], ref['high'] - ref['low']
+    if not (50 <= rng <= 1500):
+        return []
+
+    since = df[
+        (df.index >= day + pd.Timedelta(hours=14)) &
+        (df.index <= day + pd.Timedelta(hours=now.hour))
+    ]
+    if len(since) == 0:
+        return []
+
+    trail = rng * 0.5
+    mt5   = config.MT5_SYMBOLS["NAS100"]
+
+    if since['high'].max() > hi:
+        sig = _make_signal("NAS100 Open", mt5, "BUY", hi, lo, hi + (hi - lo), trail)
+        sig.note = f"Pre-mkt range {rng:.0f}pts | trail {trail:.0f}pts after +1R"
+        _mark(key); return [sig]
+
+    if since['low'].min() < lo:
+        sig = _make_signal("NAS100 Open", mt5, "SELL", lo, hi, lo - (hi - lo), trail)
+        sig.note = f"Pre-mkt range {rng:.0f}pts | trail {trail:.0f}pts after +1R"
+        _mark(key); return [sig]
+
+    return []
+
+
+# ── 4+5. H4 EMA (DAX, OIL) ────────────────────────────────────────────────────
+
+def _h4_ema(now: datetime) -> list[Signal]:
+    sigs = []
+    for yf_sym, mt5_sym, name, s_start, s_end in [
+        ("^GDAXI", config.MT5_SYMBOLS["DAX"], "DAX", 8,  16),
+        ("CL=F",   config.MT5_SYMBOLS["OIL"], "Oil", 14, 21),
+    ]:
+        if not (s_start <= now.hour < s_end):
+            continue
+        try:
+            raw = yf.download(yf_sym, interval="1h", period="60d",
+                              auto_adjust=True, progress=False)
+            if raw is None or len(raw) < 50:
+                continue
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+            raw.columns = [c.lower() for c in raw.columns]
+            raw = raw.dropna()
+            if raw.index.tz is None:
+                raw.index = raw.index.tz_localize('UTC')
+
+            df = raw.resample('4h').agg(
+                {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}
+            ).dropna()
+            if len(df) < 30:
+                continue
+
+            df['ema10'] = df['close'].ewm(span=10, adjust=False).mean()
+            df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
+            hi, lo, cl  = df['high'], df['low'], df['close']
+            tr  = pd.concat([hi-lo, (hi-cl.shift()).abs(), (lo-cl.shift()).abs()], axis=1).max(axis=1)
+            df['atr'] = tr.ewm(com=13, adjust=False).mean()
+            dmp  = ((hi-hi.shift()) > (lo.shift()-lo)).astype(float) * (hi-hi.shift()).clip(0)
+            dmm  = ((lo.shift()-lo) > (hi-hi.shift())).astype(float) * (lo.shift()-lo).clip(0)
+            as_  = tr.ewm(com=13, adjust=False).mean()
+            dip  = 100 * dmp.ewm(com=13, adjust=False).mean() / as_
+            dim  = 100 * dmm.ewm(com=13, adjust=False).mean() / as_
+            df['adx'] = (100*(dip-dim).abs()/(dip+dim).replace(0,1)).fillna(0).ewm(com=13,adjust=False).mean()
+
+            bar, prev = df.iloc[-2], df.iloc[-3]
+            if bar['adx'] < 25:
+                continue
+
+            bull = bar['ema10'] > bar['ema20'] and prev['ema10'] <= prev['ema20']
+            bear = bar['ema10'] < bar['ema20'] and prev['ema10'] >= prev['ema20']
+            if not bull and not bear:
+                continue
+
+            key = f"H4_{name}_{df.index[-2].date().isoformat()}"
+            if _fired_today(key):
+                continue
+
+            entry, atr = bar['close'], bar['atr']
+            if bull:
+                sl  = entry - 1.5 * atr
+                sig = _make_signal("H4 EMA", mt5_sym, "BUY",
+                                   entry, sl, entry + (entry - sl), atr * 0.75)
+            else:
+                sl  = entry + 1.5 * atr
+                sig = _make_signal("H4 EMA", mt5_sym, "SELL",
+                                   entry, sl, entry - (sl - entry), atr * 0.75)
+            sig.note = f"{name} EMA 10/20 {'bull' if bull else 'bear'} cross | ADX {bar['adx']:.0f}"
+            _mark(key); sigs.append(sig)
+
+        except Exception as e:
+            print(f"  [H4 EMA] {name}: {e}")
+
+    return sigs
+
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+def get_all_signals() -> list[Signal]:
+    now = datetime.now(timezone.utc)
+    return (
+        _london_breakout(now) +
+        _dax_orb(now) +
+        _nas100_open(now) +
+        _h4_ema(now)
+    )
+
+
+def evaluate(mt5_symbol: str) -> Signal | None:
+    """Used by auto_trader.py — returns first matching signal for this symbol."""
+    allowed, msg = risk_manager.is_trading_allowed()
+    if not allowed:
+        print(f"  [Risk] {msg}")
+        return None
+    cooled, msg = risk_manager.in_sl_cooldown(mt5_symbol)
+    if cooled:
+        print(f"  [Cooldown] {msg}")
+        return None
+    for sig in get_all_signals():
+        if sig.symbol == mt5_symbol:
+            return sig
+    return None

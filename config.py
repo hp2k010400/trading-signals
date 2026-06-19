@@ -1,85 +1,55 @@
 import os
 
-# ── Telegram ──────────────────────────────────────────────────────────────────
+# ── Telegram ───────────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ── Twelve Data ───────────────────────────────────────────────────────────────
-TWELVE_DATA_KEY  = os.environ.get("TWELVE_DATA_KEY", "")
+# ── Account ────────────────────────────────────────────────────────────────────
+ACCOUNT_BALANCE = float(os.environ.get("ACCOUNT_BALANCE", "70000"))
 
-# ── Symbols ───────────────────────────────────────────────────────────────────
-SYMBOLS = ["XAUUSD"]
+# ── MT5 login (local auto_trader.py only — NOT used on Railway) ───────────────
+MT5_LOGIN    = int(os.environ.get("MT5_LOGIN", "0")) or None
+MT5_PASSWORD = os.environ.get("MT5_PASSWORD", "")
+MT5_SERVER   = os.environ.get("MT5_SERVER", "")
 
-# ── Timeframes ────────────────────────────────────────────────────────────────
-PRIMARY_TF = "M15"
+# ── Risk per strategy (% of balance) ──────────────────────────────────────────
+RISK = {
+    "London Breakout": 0.004,    # 0.4% — EURUSD/GBPUSD are correlated, keep low
+    "DAX ORB":         0.0075,   # 0.75%
+    "NAS100 Open":     0.0075,   # 0.75%
+    "H4 EMA":          0.0075,   # 0.75%
+}
+RISK_PER_ENTRY_PCT = 0.75        # default % — used by auto_trader.py
 
-# ── Risk ──────────────────────────────────────────────────────────────────────
-ACCOUNT_BALANCE     = float(os.environ.get("ACCOUNT_BALANCE", "10000"))
-MIN_LOT             = 0.01
-MAX_LOT             = 5.0
-FIXED_LOT           = None   # set to a float to override % sizing
+# ── MT5 symbol names — check these match YOUR broker's Market Watch exactly ───
+# Common alternatives shown as comments
+MT5_SYMBOLS = {
+    "EURUSD":  "EURUSD",
+    "GBPUSD":  "GBPUSD",
+    "DAX":     "GER40.cash",    # also: DE40, GER40, DAX40
+    "NAS100":  "NAS100.cash",   # also: US100, NAS100, NQ100
+    "OIL":     "USOil.cash",    # also: WTI, OIL, CL, XTIUSD
+}
+SYMBOLS = list(MT5_SYMBOLS.values())
 
-# Risk % of account per trade — scales automatically with balance
-RISK_PCT_TIER_1     = 0.25    # 1 confirmation  (RSI only)
-RISK_PCT_TIER_2     = 0.40    # 2 confirmations (RSI + pattern OR MACD)
-RISK_PCT_TIER_3     = 0.50    # 3 confirmations (RSI + pattern + MACD)
+# ── Bot behaviour ──────────────────────────────────────────────────────────────
+POLL_INTERVAL_SECONDS = 60
+CANDLES_NEEDED        = 100
 
-# ── SL/TP settings ────────────────────────────────────────────────────────────
-SL_POINTS           = 12      # fallback/DCA SL — fresh entries use structure-based SL
-TP_BUFFER           = 2       # place TP 2 pts before the S/R level
-ENTRY_LEVEL_TOLERANCE = 5    # pts — price must be within this of an S/R level to qualify
-SL_BUFFER           = 3       # pts beyond the entry level where SL is placed
-MIN_SL_POINTS       = 8       # minimum SL distance regardless of level placement
-ROUND_NUMBER_STEP   = 25      # gold clusters around every 25 points
+# ── News filter ────────────────────────────────────────────────────────────────
+NEWS_PAUSE_MINUTES = 15
+NEWS_CURRENCIES    = ["USD", "EUR", "GBP"]
 
-# ── Multi-entry (DCA) settings ────────────────────────────────────────────────
-MAX_ENTRIES         = 3       # max entries toward same target
-ENTRY_SEPARATION    = 8       # min points of pullback before adding next entry
-TARGET_EXPIRY_HOURS = 24      # drop a target if not hit within 24 hours
+# ── Position sizing ────────────────────────────────────────────────────────────
+FIXED_LOT = None
+MIN_LOT   = 0.01
+MAX_LOT   = 10.0
 
-# ── Indicators ────────────────────────────────────────────────────────────────
-EMA_FAST    = 10
-EMA_SLOW    = 20
-RSI_PERIOD  = 14
-RSI_OB      = 75
-RSI_OS      = 20
-ATR_PERIOD       = 14
-EARLY_EXIT_POINTS = 5
-ADX_PERIOD       = 14
+# ── FTMO safety thresholds (bot pauses if these are breached) ─────────────────
+FTMO_DAILY_LOSS_LIMIT = ACCOUNT_BALANCE * 0.045   # 4.5% (hard limit is 5%)
+FTMO_TOTAL_DD_LIMIT   = ACCOUNT_BALANCE * 0.09    # 9%   (hard limit is 10%)
 
-# ── Trend filters ─────────────────────────────────────────────────────────────
-USE_H1_FILTER   = True   # only trade M15 signals in the H1 trend direction
-USE_H4_BIAS     = True   # daily bias — only trade in H4 trend direction, no counter-trend at all
-USE_ADX_FILTER  = True   # skip signals when ADX < ADX_MIN (ranging market)
-ADX_MIN         = 20.0   # below this = ranging, no trade
-
-# ── News filter ───────────────────────────────────────────────────────────────
-NEWS_PAUSE_MINUTES = 30
-NEWS_CURRENCIES    = ["USD", "XAU"]
-
-# ── Re-entry cooldown ─────────────────────────────────────────────────────────
-SL_COOLDOWN_MINUTES = 60   # after an SL, don't re-enter same symbol for this long
-
-# ── Daily loss protection ─────────────────────────────────────────────────────
-MAX_CONSECUTIVE_SL  = 3    # pause after this many SLs in a row
-SL_PAUSE_HOURS      = 4    # how long to pause trading after hitting the streak limit
-
-# ── Risk ──────────────────────────────────────────────────────────────────────
-RISK_PER_ENTRY_PCT  = 1.0  # % of account risked per trade (informational)
-
-# ── Engine ────────────────────────────────────────────────────────────────────
-POLL_INTERVAL_SECONDS = 300   # 5 minutes — fast enough to catch pyramid entries
-CANDLES_NEEDED        = 200
-
-# ── Range Bot ─────────────────────────────────────────────────────────────────
-USE_RANGE_BOT        = True
-RANGE_ADX_MAX        = 20     # H4 ADX below this = range mode (trend bot off)
-RANGE_LOOKBACK       = 30     # M15 bars to scan for range boundaries
-RANGE_MIN_WIDTH      = 20     # minimum range width in points
-RANGE_MAX_WIDTH      = 60     # maximum range width — wider means trending, not ranging
-RANGE_MIN_TOUCHES    = 2      # touches required on each boundary
-RANGE_MIN_BARS       = 8      # minimum bars fully contained in range
-RANGE_ENTRY_ZONE     = 8      # within X pts of boundary to consider entry
-RANGE_SL_PTS         = 12     # SL distance beyond range boundary
-RANGE_BREAKOUT_PTS   = 10     # candle close this far beyond range = confirmed breakout
-RANGE_RISK_PCT       = 0.20   # risk % per range trade (smaller than trend)
+# ── Legacy Gold bot fields (kept so old imports don't break) ──────────────────
+MAX_CONSECUTIVE_SL  = 3
+SL_PAUSE_HOURS      = 4
+SL_COOLDOWN_MINUTES = 60
