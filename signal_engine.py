@@ -1,25 +1,25 @@
 """
-signal_engine.py — Detects signals for all five strategies.
+signal_engine.py — Detects signals for all five strategies using real-time MT5 data.
 
-Strategies (all use yfinance H1 data — no API key needed):
+Strategies:
   1. London Breakout   EURUSD, GBPUSD   07:00–10:00 UTC   daily
   2. DAX ORB           GER40            09:00–12:00 UTC   daily
   3. NAS100 US Open    NAS100           14:00–16:00 UTC   daily
   4. DAX H4 EMA        GER40            08:00–16:00 UTC   1-2×/month
   5. Oil H4 EMA        USOil            14:00–21:00 UTC   1×/month
 
-Each strategy fires at most once per day per instrument.
+Uses MT5 directly — no yfinance lag. MT5 must be open and logged in.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, date
 import pandas as pd
-import yfinance as yf
 import warnings
 warnings.filterwarnings('ignore')
 
 import config
 import risk_manager
+import mt5_client
 
 
 # ── Signal ─────────────────────────────────────────────────────────────────────
@@ -31,10 +31,10 @@ class Signal:
     action:         str           # "BUY" or "SELL"
     entry:          float
     sl:             float
-    tp:             float         # = trail_activate (used by auto_trader.py)
+    tp:             float         # trail_activate — used by auto_trader.py
     trail_activate: float         # move SL to BE when price hits this
     trail_distance: float         # then trail SL this many pts behind price
-    lots:           float         # calculated lot size
+    lots:           float
     note:           str = ""
     sl_points:      float = field(init=False)
     risk_gbp:       float = field(init=False)
@@ -55,25 +55,31 @@ def _mark(key: str):
     _fired[key] = datetime.now(timezone.utc).date()
 
 
-# ── Data ───────────────────────────────────────────────────────────────────────
+# ── Data — MT5 real-time, zero lag ────────────────────────────────────────────
 
-def _h1(yf_symbol: str, days: int = 30) -> pd.DataFrame | None:
+def _h1(mt5_symbol: str, count: int = 100) -> pd.DataFrame | None:
     try:
-        df = yf.download(yf_symbol, interval="1h", period=f"{days}d",
-                         auto_adjust=True, progress=False)
+        df = mt5_client.get_bars(mt5_symbol, "H1", count)
         if df is None or len(df) < 10:
             return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        df.columns = [c.lower() for c in df.columns]
-        df = df.dropna()
         if df.index.tz is None:
             df.index = df.index.tz_localize('UTC')
-        else:
-            df.index = df.index.tz_convert('UTC')
         return df
     except Exception as e:
-        print(f"  [data] {yf_symbol}: {e}")
+        print(f"  [MT5] {mt5_symbol} H1: {e}")
+        return None
+
+
+def _h4(mt5_symbol: str, count: int = 60) -> pd.DataFrame | None:
+    try:
+        df = mt5_client.get_bars(mt5_symbol, "H4", count)
+        if df is None or len(df) < 10:
+            return None
+        if df.index.tz is None:
+            df.index = df.index.tz_localize('UTC')
+        return df
+    except Exception as e:
+        print(f"  [MT5] {mt5_symbol} H4: {e}")
         return None
 
 
@@ -82,7 +88,7 @@ def _today() -> pd.Timestamp:
     return pd.Timestamp(n.year, n.month, n.day, tz='UTC')
 
 
-def _make_signal(strategy, mt5_sym, action, entry, sl, trail_act, trail_dist) -> Signal:
+def _make(strategy, mt5_sym, action, entry, sl, trail_act, trail_dist) -> Signal:
     lots = risk_manager.calc_lots(mt5_sym, abs(entry - sl), strategy)
     return Signal(
         strategy=strategy, symbol=mt5_sym, action=action,
@@ -102,15 +108,15 @@ def _london_breakout(now: datetime) -> list[Signal]:
     prev = day - pd.Timedelta(days=1)
     sigs = []
 
-    for yf_sym, mt5_sym, pip in [
-        ("EURUSD=X", config.MT5_SYMBOLS["EURUSD"], 0.0001),
-        ("GBPUSD=X", config.MT5_SYMBOLS["GBPUSD"], 0.0001),
+    for mt5_sym, pip in [
+        (config.MT5_SYMBOLS["EURUSD"], 0.0001),
+        (config.MT5_SYMBOLS["GBPUSD"], 0.0001),
     ]:
         key = f"LB_{mt5_sym}"
         if _fired_today(key):
             continue
 
-        df = _h1(yf_sym)
+        df = _h1(mt5_sym)
         if df is None:
             continue
 
@@ -135,23 +141,21 @@ def _london_breakout(now: datetime) -> list[Signal]:
         if len(london) == 0:
             continue
 
-        hi_seen = london['high'].max()
-        lo_seen = london['low'].min()
-        buf     = rng * 0.15
+        buf = rng * 0.15
 
-        if hi_seen > a_hi:
+        if london['high'].max() > a_hi:
             entry = a_hi
             sl    = a_lo - buf
-            sig   = _make_signal("London Breakout", mt5_sym, "BUY",
-                                 entry, sl, entry + abs(entry - sl), rng)
+            sig   = _make("London Breakout", mt5_sym, "BUY",
+                          entry, sl, entry + abs(entry - sl), rng)
             sig.note = f"Asian range {pips:.0f} pips | trail {rng/pip:.0f} pips after +1R"
             _mark(key); sigs.append(sig)
 
-        elif lo_seen < a_lo:
+        elif london['low'].min() < a_lo:
             entry = a_lo
             sl    = a_hi + buf
-            sig   = _make_signal("London Breakout", mt5_sym, "SELL",
-                                 entry, sl, entry - abs(sl - entry), rng)
+            sig   = _make("London Breakout", mt5_sym, "SELL",
+                          entry, sl, entry - abs(sl - entry), rng)
             sig.note = f"Asian range {pips:.0f} pips | trail {rng/pip:.0f} pips after +1R"
             _mark(key); sigs.append(sig)
 
@@ -167,7 +171,8 @@ def _dax_orb(now: datetime) -> list[Signal]:
     if _fired_today(key):
         return []
 
-    df = _h1("^GDAXI")
+    mt5_sym = config.MT5_SYMBOLS["DAX"]
+    df = _h1(mt5_sym)
     if df is None:
         return []
 
@@ -190,15 +195,14 @@ def _dax_orb(now: datetime) -> list[Signal]:
         return []
 
     trail = rng * 0.5
-    mt5   = config.MT5_SYMBOLS["DAX"]
 
     if since['high'].max() > hi:
-        sig = _make_signal("DAX ORB", mt5, "BUY", hi, lo, hi + (hi - lo), trail)
+        sig = _make("DAX ORB", mt5_sym, "BUY", hi, lo, hi + (hi - lo), trail)
         sig.note = f"ORB {rng:.0f}pts | trail {trail:.0f}pts after +1R"
         _mark(key); return [sig]
 
     if since['low'].min() < lo:
-        sig = _make_signal("DAX ORB", mt5, "SELL", lo, hi, lo - (hi - lo), trail)
+        sig = _make("DAX ORB", mt5_sym, "SELL", lo, hi, lo - (hi - lo), trail)
         sig.note = f"ORB {rng:.0f}pts | trail {trail:.0f}pts after +1R"
         _mark(key); return [sig]
 
@@ -214,7 +218,8 @@ def _nas100_open(now: datetime) -> list[Signal]:
     if _fired_today(key):
         return []
 
-    df = _h1("NQ=F")
+    mt5_sym = config.MT5_SYMBOLS["NAS100"]
+    df = _h1(mt5_sym)
     if df is None:
         return []
 
@@ -237,15 +242,14 @@ def _nas100_open(now: datetime) -> list[Signal]:
         return []
 
     trail = rng * 0.5
-    mt5   = config.MT5_SYMBOLS["NAS100"]
 
     if since['high'].max() > hi:
-        sig = _make_signal("NAS100 Open", mt5, "BUY", hi, lo, hi + (hi - lo), trail)
+        sig = _make("NAS100 Open", mt5_sym, "BUY", hi, lo, hi + (hi - lo), trail)
         sig.note = f"Pre-mkt range {rng:.0f}pts | trail {trail:.0f}pts after +1R"
         _mark(key); return [sig]
 
     if since['low'].min() < lo:
-        sig = _make_signal("NAS100 Open", mt5, "SELL", lo, hi, lo - (hi - lo), trail)
+        sig = _make("NAS100 Open", mt5_sym, "SELL", lo, hi, lo - (hi - lo), trail)
         sig.note = f"Pre-mkt range {rng:.0f}pts | trail {trail:.0f}pts after +1R"
         _mark(key); return [sig]
 
@@ -256,30 +260,18 @@ def _nas100_open(now: datetime) -> list[Signal]:
 
 def _h4_ema(now: datetime) -> list[Signal]:
     sigs = []
-    for yf_sym, mt5_sym, name, s_start, s_end in [
-        ("^GDAXI", config.MT5_SYMBOLS["DAX"], "DAX", 8,  16),
-        ("CL=F",   config.MT5_SYMBOLS["OIL"], "Oil", 14, 21),
+    for mt5_sym, name, s_start, s_end in [
+        (config.MT5_SYMBOLS["DAX"], "DAX", 8,  16),
+        (config.MT5_SYMBOLS["OIL"], "Oil", 14, 21),
     ]:
         if not (s_start <= now.hour < s_end):
             continue
+
+        df = _h4(mt5_sym)
+        if df is None or len(df) < 30:
+            continue
+
         try:
-            raw = yf.download(yf_sym, interval="1h", period="60d",
-                              auto_adjust=True, progress=False)
-            if raw is None or len(raw) < 50:
-                continue
-            if isinstance(raw.columns, pd.MultiIndex):
-                raw.columns = raw.columns.get_level_values(0)
-            raw.columns = [c.lower() for c in raw.columns]
-            raw = raw.dropna()
-            if raw.index.tz is None:
-                raw.index = raw.index.tz_localize('UTC')
-
-            df = raw.resample('4h').agg(
-                {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}
-            ).dropna()
-            if len(df) < 30:
-                continue
-
             df['ema10'] = df['close'].ewm(span=10, adjust=False).mean()
             df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
             hi, lo, cl  = df['high'], df['low'], df['close']
@@ -287,12 +279,12 @@ def _h4_ema(now: datetime) -> list[Signal]:
             df['atr'] = tr.ewm(com=13, adjust=False).mean()
             dmp  = ((hi-hi.shift()) > (lo.shift()-lo)).astype(float) * (hi-hi.shift()).clip(0)
             dmm  = ((lo.shift()-lo) > (hi-hi.shift())).astype(float) * (lo.shift()-lo).clip(0)
-            as_  = tr.ewm(com=13, adjust=False).mean()
-            dip  = 100 * dmp.ewm(com=13, adjust=False).mean() / as_
-            dim  = 100 * dmm.ewm(com=13, adjust=False).mean() / as_
-            df['adx'] = (100*(dip-dim).abs()/(dip+dim).replace(0,1)).fillna(0).ewm(com=13,adjust=False).mean()
+            atr_s = tr.ewm(com=13, adjust=False).mean()
+            dip  = 100 * dmp.ewm(com=13, adjust=False).mean() / atr_s
+            dim  = 100 * dmm.ewm(com=13, adjust=False).mean() / atr_s
+            df['adx'] = (100*(dip-dim).abs()/(dip+dim).replace(0,1)).fillna(0).ewm(com=13, adjust=False).mean()
 
-            bar, prev = df.iloc[-2], df.iloc[-3]
+            bar, prev = df.iloc[-2], df.iloc[-3]   # last COMPLETED H4 bar
             if bar['adx'] < 25:
                 continue
 
@@ -308,12 +300,12 @@ def _h4_ema(now: datetime) -> list[Signal]:
             entry, atr = bar['close'], bar['atr']
             if bull:
                 sl  = entry - 1.5 * atr
-                sig = _make_signal("H4 EMA", mt5_sym, "BUY",
-                                   entry, sl, entry + (entry - sl), atr * 0.75)
+                sig = _make("H4 EMA", mt5_sym, "BUY",
+                            entry, sl, entry + (entry - sl), atr * 0.75)
             else:
                 sl  = entry + 1.5 * atr
-                sig = _make_signal("H4 EMA", mt5_sym, "SELL",
-                                   entry, sl, entry - (sl - entry), atr * 0.75)
+                sig = _make("H4 EMA", mt5_sym, "SELL",
+                            entry, sl, entry - (sl - entry), atr * 0.75)
             sig.note = f"{name} EMA 10/20 {'bull' if bull else 'bear'} cross | ADX {bar['adx']:.0f}"
             _mark(key); sigs.append(sig)
 
@@ -336,15 +328,13 @@ def get_all_signals() -> list[Signal]:
 
 
 def evaluate(mt5_symbol: str) -> Signal | None:
-    """Used by auto_trader.py — returns first matching signal for this symbol."""
+    """Used by auto_trader.py."""
     allowed, msg = risk_manager.is_trading_allowed()
     if not allowed:
-        print(f"  [Risk] {msg}")
-        return None
+        print(f"  [Risk] {msg}"); return None
     cooled, msg = risk_manager.in_sl_cooldown(mt5_symbol)
     if cooled:
-        print(f"  [Cooldown] {msg}")
-        return None
+        print(f"  [Cooldown] {msg}"); return None
     for sig in get_all_signals():
         if sig.symbol == mt5_symbol:
             return sig
