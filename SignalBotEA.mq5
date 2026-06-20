@@ -1,46 +1,69 @@
 //+------------------------------------------------------------------+
-//| SignalBotEA.mq5 — Auto-executes all 5 strategies                 |
+//| 5StratBot / SignalBotEA.mq5                                      |
 //| Attach to ANY chart. Runs in background, checks every 60s.       |
 //|                                                                   |
-//| Strategies:                                                       |
-//|  1. London Breakout  EURUSD, GBPUSD   07:00-10:00 UTC            |
-//|  2. DAX ORB          GER40            09:00-12:00 UTC            |
-//|  3. NAS100 Open      US100.cash       14:00-16:00 UTC            |
-//|  4. DAX H4 EMA       GER40            08:00-16:00 UTC            |
-//|  5. Oil H4 EMA       XTIUSD           14:00-21:00 UTC            |
+//| STRATEGIES:                                                       |
+//|  1.  London Breakout  EURUSD, GBPUSD   07:00-10:00 UTC (skip Tue)|
+//|  2.  DAX ORB          GER40            09:00-12:00 UTC           |
+//|  3.  NAS100 Open      US100.cash       14:00-16:00 UTC (Tue-Fri) |
+//|  4.  NatGas Open      XNGUSD           14:00-16:00 UTC           |
+//|  5.  DAX H4 EMA       GER40            08:00-16:00 UTC           |
+//|  6.  Oil H4 EMA       USOIL.cash       14:00-21:00 UTC           |
+//|  7.  UK100 H4 EMA     UK100.cash       08:00-16:00 UTC           |
+//|  8.  EURCHF H4 EMA    EURCHF           08:00-17:00 UTC           |
+//|  9.  GBPJPY H4 EMA    GBPJPY           00:00-21:00 UTC           |
+//|  10. USDCHF H4 EMA    USDCHF           08:00-17:00 UTC           |
+//|  11. NatGas H1 EMA    XNGUSD           14:00-21:00 UTC (fallback)|
+//|                                                                   |
+//| TRAIL: ORB/LB strategies = 0.2R  |  H4 EMA strategies = 0.3R    |
+//| (Optimised via backtest_optimise2.py — 2yr sweep across all strats)|
 //+------------------------------------------------------------------+
 #property copyright "GC4C Signal Bot"
-#property version   "1.00"
+#property version   "2.10"
 #property strict
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 
-CTrade         trade;
-CPositionInfo  pos;
+CTrade        trade;
+CPositionInfo pos;
 
-//--- Input parameters (change symbol names to match your broker)
-input string   Sym_EURUSD  = "EURUSD";       // EURUSD symbol
-input string   Sym_GBPUSD  = "GBPUSD";       // GBPUSD symbol
-input string   Sym_DAX     = "GER40.cash";   // DAX symbol
-input string   Sym_NAS100  = "US100.cash";   // NAS100 symbol  ← already visible in your MT5
-input string   Sym_OIL     = "XTIUSD";       // Oil symbol
+//--- Symbol inputs (verify names match YOUR broker's Market Watch)
+input string  Sym_EURUSD = "EURUSD";
+input string  Sym_GBPUSD = "GBPUSD";
+input string  Sym_DAX    = "GER40.cash";
+input string  Sym_NAS100 = "US100.cash";
+input string  Sym_OIL    = "USOIL.cash";
+input string  Sym_NATGAS = "XNGUSD";        // Natural Gas — check your broker
+input string  Sym_UK100  = "UK100.cash";    // FTSE 100
+input string  Sym_EURCHF = "EURCHF";
+input string  Sym_GBPJPY = "GBPJPY";
+input string  Sym_USDCHF = "USDCHF";
 
-input double   Risk_LB     = 0.4;    // London Breakout risk % per trade
-input double   Risk_ORB    = 0.75;   // DAX ORB risk %
-input double   Risk_NAS    = 0.75;   // NAS100 Open risk %
-input double   Risk_H4     = 0.75;   // H4 EMA risk %
+//--- Risk per trade (% of account balance)
+input double  Risk_LB   = 0.4;    // London Breakout
+input double  Risk_ORB  = 0.75;   // DAX ORB
+input double  Risk_NAS  = 0.75;   // NAS100 Open
+input double  Risk_NG   = 0.75;   // NatGas Open
+input double  Risk_H4   = 0.75;   // All H4 EMA strategies
 
-input int      Magic       = 20250619; // unique ID for our trades
+// Trail multipliers — optimised via backtest sweep
+// ORB/LB peak at 0.2R, H4 EMA peak at 0.3R (small sample, conservative)
+input double  Trail_ORB = 0.2;    // London Breakout + all ORB strategies
+input double  Trail_H4  = 0.3;    // H4 EMA trend strategies
 
-//--- Daily fired flags (reset at midnight UTC)
-bool  lb_eur_fired   = false;
-bool  lb_gbp_fired   = false;
-bool  dax_orb_fired  = false;
-bool  nas_fired      = false;
-bool  h4_dax_fired   = false;
-bool  h4_oil_fired   = false;
-datetime last_reset  = 0;
+input int     Magic = 20250619;
+
+//--- Daily fired flags
+bool lb_eur_fired, lb_gbp_fired, dax_orb_fired, nas_fired, ng_fired, ng_h1_fired;
+bool h4_dax_fired, h4_oil_fired, h4_uk100_fired, h4_eurchf_fired;
+bool h4_gbpjpy_fired, h4_usdchf_fired;
+datetime last_reset = 0;
+
+//--- Best-price tracker for trailing stops
+struct TrailData { ulong ticket; double best; };
+TrailData g_trails[100];
+int       g_trail_n = 0;
 
 //+------------------------------------------------------------------+
 int OnInit()
@@ -48,381 +71,349 @@ int OnInit()
    trade.SetExpertMagicNumber(Magic);
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
-   Print("SignalBotEA started | Magic: ", Magic);
+   Print("5StratBot v2.10 started — 11 strategies | Trail ORB=0.2R H4=0.3R");
    return INIT_SUCCEEDED;
 }
-
 void OnDeinit(const int reason) { EventKillTimer(); }
 void OnTick() {}
 
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-   ResetDailyFlags();
-   ManageTrailingStops();
-   CheckLondonBreakout();
+   ResetDaily();
+   ManageTrails();
+
+   // London Breakout 07:00-10:00 (skip Tuesday — PF 0.96 on Tue)
+   CheckLBEur();
+   CheckLBGbp();
+
+   // DAX ORB 09:00-12:00
    CheckDAXOrb();
-   CheckNAS100Open();
-   CheckH4EMA();
+
+   // US Open 14:00-16:00 (NAS100: Tue-Fri — Fri PF 2.25, skip Mon only)
+   CheckNAS100();
+   CheckNatGas();
+   CheckNatGasH1();   // H1 EMA fallback when ORB doesn't fire (PF 1.75)
+
+   // H4 EMA — fire whenever in session
+   CheckH4(Sym_DAX,    Risk_H4, 8,  16, h4_dax_fired,    "H4_DAX");
+   CheckH4(Sym_OIL,    Risk_H4, 14, 21, h4_oil_fired,    "H4_OIL");
+   CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100");
+   CheckH4(Sym_EURCHF, Risk_H4, 8,  17, h4_eurchf_fired, "H4_EURCHF");
+   CheckH4(Sym_GBPJPY, Risk_H4, 0,  21, h4_gbpjpy_fired, "H4_GBPJPY");
+   CheckH4(Sym_USDCHF, Risk_H4, 8,  17, h4_usdchf_fired, "H4_USDCHF");
 }
 
 //+------------------------------------------------------------------+
-//| Reset all daily flags at midnight UTC                            |
-//+------------------------------------------------------------------+
-void ResetDailyFlags()
+void ResetDaily()
 {
    MqlDateTime dt;
    TimeToStruct(TimeGMT(), dt);
-   datetime today = StringToTime(StringFormat("%d.%02d.%02d 00:00",
-                                 dt.year, dt.mon, dt.day));
-   if(today != last_reset)
-   {
-      lb_eur_fired = lb_gbp_fired = dax_orb_fired = false;
-      nas_fired    = h4_dax_fired = h4_oil_fired  = false;
-      last_reset   = today;
-      Print("Daily flags reset");
-   }
+   datetime today = StringToTime(StringFormat("%d.%02d.%02d",
+                    dt.year, dt.mon, dt.day));
+   if(today == last_reset) return;
+
+   lb_eur_fired = lb_gbp_fired = dax_orb_fired = nas_fired = ng_fired = ng_h1_fired = false;
+   h4_dax_fired = h4_oil_fired = h4_uk100_fired = h4_eurchf_fired = false;
+   h4_gbpjpy_fired = h4_usdchf_fired = false;
+   last_reset   = today;
+   g_trail_n    = 0;
+   Print("Daily flags reset — ", dt.day, "/", dt.mon, "/", dt.year);
 }
 
 //+------------------------------------------------------------------+
-//| Lot size from risk % and SL distance                             |
-//+------------------------------------------------------------------+
-double CalcLots(string symbol, double sl_points, double risk_pct)
+int UTCHour()
 {
-   double balance    = AccountInfoDouble(ACCOUNT_BALANCE);
-   double risk_money = balance * (risk_pct / 100.0);
-   double tick_val   = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-   double tick_size  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
-   if(tick_val <= 0 || tick_size <= 0 || sl_points <= 0) return 0.01;
-   double sl_ticks   = sl_points / tick_size;
-   double lots       = risk_money / (sl_ticks * tick_val);
-   double step       = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-   lots = MathFloor(lots / step) * step;
-   double min_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-   double max_lot    = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-   return MathMax(min_lot, MathMin(max_lot, lots));
+   MqlDateTime dt;
+   TimeToStruct(TimeGMT(), dt);
+   return dt.hour;
 }
 
-//+------------------------------------------------------------------+
-//| Place a trade                                                    |
-//+------------------------------------------------------------------+
-bool OpenTrade(string symbol, ENUM_ORDER_TYPE type, double sl, string comment)
+bool HasPosition(string sym)
 {
-   SymbolSelect(symbol, true);
-   double price = (type == ORDER_TYPE_BUY)
-                  ? SymbolInfoDouble(symbol, SYMBOL_ASK)
-                  : SymbolInfoDouble(symbol, SYMBOL_BID);
-   double sl_pts = MathAbs(price - sl);
-   double lots   = CalcLots(symbol, sl_pts, Risk_ORB); // default, overridden per strategy
-
-   if(lots <= 0) { Print("CalcLots returned 0 for ", symbol); return false; }
-
-   bool ok = (type == ORDER_TYPE_BUY)
-             ? trade.Buy(lots, symbol, price, sl, 0, comment)
-             : trade.Sell(lots, symbol, price, sl, 0, comment);
-
-   if(ok) Print("TRADE OPENED: ", symbol, " ", EnumToString(type),
-                " @ ", price, " SL=", sl, " lots=", lots);
-   else   Print("TRADE FAILED: ", symbol, " error=", GetLastError());
-
-   return ok;
-}
-
-bool OpenBuy(string symbol, double sl, double risk_pct, string comment)
-{
-   SymbolSelect(symbol, true);
-   double price  = SymbolInfoDouble(symbol, SYMBOL_ASK);
-   double sl_pts = MathAbs(price - sl);
-   double lots   = CalcLots(symbol, sl_pts, risk_pct);
-   if(lots <= 0) return false;
-   bool ok = trade.Buy(lots, symbol, price, sl, 0, comment);
-   if(ok) Print("BUY ", symbol, " @ ", price, " SL=", sl, " lots=", lots, " [", comment, "]");
-   else   Print("BUY FAILED ", symbol, " err=", GetLastError());
-   return ok;
-}
-
-bool OpenSell(string symbol, double sl, double risk_pct, string comment)
-{
-   SymbolSelect(symbol, true);
-   double price  = SymbolInfoDouble(symbol, SYMBOL_BID);
-   double sl_pts = MathAbs(price - sl);
-   double lots   = CalcLots(symbol, sl_pts, risk_pct);
-   if(lots <= 0) return false;
-   bool ok = trade.Sell(lots, symbol, price, sl, 0, comment);
-   if(ok) Print("SELL ", symbol, " @ ", price, " SL=", sl, " lots=", lots, " [", comment, "]");
-   else   Print("SELL FAILED ", symbol, " err=", GetLastError());
-   return ok;
-}
-
-//+------------------------------------------------------------------+
-//| Trailing stop management — runs every 60s for all our positions  |
-//+------------------------------------------------------------------+
-void ManageTrailingStops()
-{
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      if(!pos.SelectByIndex(i)) continue;
-      if(pos.Magic() != Magic)  continue;
-
-      string sym    = pos.Symbol();
-      double entry  = pos.PriceOpen();
-      double sl_cur = pos.StopLoss();
-      double sl_dist = MathAbs(entry - sl_cur);
-      double trail  = sl_dist * 0.5;   // trail at 0.5R — proven best config
-
-      if(pos.PositionType() == POSITION_TYPE_BUY)
-      {
-         double best = pos.PriceHighest();   // highest price reached
-         // Move to breakeven once +1R
-         if(best >= entry + sl_dist && sl_cur < entry)
-         {
-            trade.PositionModify(sym, entry, 0);
-            Print("BE: ", sym, " SL moved to entry ", entry);
-         }
-         // Trail behind best price
-         double new_sl = best - trail;
-         if(new_sl > sl_cur + SymbolInfoDouble(sym, SYMBOL_POINT))
-         {
-            trade.PositionModify(sym, new_sl, 0);
-            Print("TRAIL: ", sym, " SL -> ", new_sl);
-         }
-      }
-      else if(pos.PositionType() == POSITION_TYPE_SELL)
-      {
-         double best = pos.PriceLowest();
-         if(best <= entry - sl_dist && sl_cur > entry)
-         {
-            trade.PositionModify(sym, entry, 0);
-            Print("BE: ", sym, " SL moved to entry ", entry);
-         }
-         double new_sl = best + trail;
-         if(new_sl < sl_cur - SymbolInfoDouble(sym, SYMBOL_POINT))
-         {
-            trade.PositionModify(sym, new_sl, 0);
-            Print("TRAIL: ", sym, " SL -> ", new_sl);
-         }
-      }
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Already have an open position for this symbol from this EA?      |
-//+------------------------------------------------------------------+
-bool HasPosition(string symbol)
-{
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-      if(pos.SelectByIndex(i) && pos.Symbol() == symbol && pos.Magic() == Magic)
+   for(int i = PositionsTotal()-1; i >= 0; i--)
+      if(pos.SelectByIndex(i) && pos.Symbol()==sym && pos.Magic()==Magic)
          return true;
    return false;
 }
 
-//+------------------------------------------------------------------+
-//| Get H1 bar data for a symbol                                     |
-//+------------------------------------------------------------------+
-bool GetH1Bar(string symbol, int shift, double &o, double &h, double &l, double &c)
+double CalcLots(string sym, double sl_pts, double risk_pct)
 {
-   MqlRates rates[];
-   if(CopyRates(symbol, PERIOD_H1, shift, 1, rates) < 1) return false;
-   o = rates[0].open; h = rates[0].high;
-   l = rates[0].low;  c = rates[0].close;
-   return true;
+   double bal  = AccountInfoDouble(ACCOUNT_BALANCE);
+   double risk = bal * (risk_pct / 100.0);
+   double tv   = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double ts   = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   if(tv<=0||ts<=0||sl_pts<=0) return SymbolInfoDouble(sym,SYMBOL_VOLUME_MIN);
+   double lots = risk / ((sl_pts/ts)*tv);
+   double step = SymbolInfoDouble(sym, SYMBOL_VOLUME_STEP);
+   lots = MathFloor(lots/step)*step;
+   return MathMax(SymbolInfoDouble(sym,SYMBOL_VOLUME_MIN),
+          MathMin(SymbolInfoDouble(sym,SYMBOL_VOLUME_MAX), lots));
 }
 
-double H1High(string symbol, int from_shift, int count)
+void DoBuy(string sym, double sl, double risk_pct, string tag)
 {
-   MqlRates rates[];
-   if(CopyRates(symbol, PERIOD_H1, from_shift, count, rates) < 1) return 0;
-   double hi = 0;
-   for(int i = 0; i < count; i++) hi = MathMax(hi, rates[i].high);
-   return hi;
+   SymbolSelect(sym, true);
+   double ask  = SymbolInfoDouble(sym, SYMBOL_ASK);
+   double lots = CalcLots(sym, MathAbs(ask-sl), risk_pct);
+   if(trade.Buy(lots, sym, ask, sl, 0, tag))
+      Print("BUY  ", sym, " @ ", ask, " SL=", sl, " lots=", lots, " [",tag,"]");
+   else
+      Print("BUY FAIL ", sym, " err=", GetLastError());
 }
 
-double H1Low(string symbol, int from_shift, int count)
+void DoSell(string sym, double sl, double risk_pct, string tag)
 {
-   MqlRates rates[];
-   if(CopyRates(symbol, PERIOD_H1, from_shift, count, rates) < 1) return DBL_MAX;
-   double lo = DBL_MAX;
-   for(int i = 0; i < count; i++) lo = MathMin(lo, rates[i].low);
-   return lo;
+   SymbolSelect(sym, true);
+   double bid  = SymbolInfoDouble(sym, SYMBOL_BID);
+   double lots = CalcLots(sym, MathAbs(bid-sl), risk_pct);
+   if(trade.Sell(lots, sym, bid, sl, 0, tag))
+      Print("SELL ", sym, " @ ", bid, " SL=", sl, " lots=", lots, " [",tag,"]");
+   else
+      Print("SELL FAIL ", sym, " err=", GetLastError());
 }
 
 //+------------------------------------------------------------------+
-//| Current UTC hour                                                 |
+//| Trailing stop management                                         |
 //+------------------------------------------------------------------+
-int UTCHour() { MqlDateTime dt; TimeToStruct(TimeGMT(), dt); return dt.hour; }
+void SetBest(ulong ticket, double price)
+{
+   for(int i=0;i<g_trail_n;i++)
+      if(g_trails[i].ticket==ticket){g_trails[i].best=price;return;}
+   if(g_trail_n<100){g_trails[g_trail_n].ticket=ticket;
+                     g_trails[g_trail_n].best=price;g_trail_n++;}
+}
+
+double GetBest(ulong ticket, double def)
+{
+   for(int i=0;i<g_trail_n;i++)
+      if(g_trails[i].ticket==ticket) return g_trails[i].best;
+   return def;
+}
+
+double TrailMult(string comment)
+{
+   // ORB and LB strategies use 0.2R (tight — breakouts move fast then fade)
+   // H4 EMA strategies use 0.3R (slightly more room for trend continuation)
+   if(StringFind(comment,"H4_")>=0) return Trail_H4;
+   return Trail_ORB;
+}
+
+void ManageTrails()
+{
+   for(int i=PositionsTotal()-1; i>=0; i--)
+   {
+      if(!pos.SelectByIndex(i)) continue;
+      if(pos.Magic()!=Magic)    continue;
+
+      string sym     = pos.Symbol();
+      double entry   = pos.PriceOpen();
+      double sl_cur  = pos.StopLoss();
+      double sl_dist = MathAbs(entry-sl_cur);
+      if(sl_dist<=0) continue;
+      double trail   = sl_dist * TrailMult(pos.Comment());
+      double pt      = SymbolInfoDouble(sym,SYMBOL_POINT);
+      ulong  ticket  = pos.Ticket();
+
+      if(pos.PositionType()==POSITION_TYPE_BUY)
+      {
+         double bid  = SymbolInfoDouble(sym,SYMBOL_BID);
+         double best = GetBest(ticket, entry);
+         if(bid > best){ best=bid; SetBest(ticket,best); }
+         if(best >= entry+sl_dist && sl_cur < entry-pt)
+            trade.PositionModify(sym, entry, 0);
+         double new_sl = best - trail;
+         if(new_sl > sl_cur+pt && new_sl > entry)
+            trade.PositionModify(sym, new_sl, 0);
+      }
+      else
+      {
+         double ask  = SymbolInfoDouble(sym,SYMBOL_ASK);
+         double best = GetBest(ticket, entry);
+         if(ask < best){ best=ask; SetBest(ticket,best); }
+         if(best <= entry-sl_dist && sl_cur > entry+pt)
+            trade.PositionModify(sym, entry, 0);
+         double new_sl = best + trail;
+         if(new_sl < sl_cur-pt && new_sl < entry)
+            trade.PositionModify(sym, new_sl, 0);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| H1 data helpers                                                  |
+//+------------------------------------------------------------------+
+double H1Hi(string sym, int shift, int n)
+{
+   MqlRates r[];
+   if(CopyRates(sym,PERIOD_H1,shift,n,r)<1) return 0;
+   double hi=0; for(int i=0;i<n;i++) hi=MathMax(hi,r[i].high); return hi;
+}
+double H1Lo(string sym, int shift, int n)
+{
+   MqlRates r[];
+   if(CopyRates(sym,PERIOD_H1,shift,n,r)<1) return DBL_MAX;
+   double lo=DBL_MAX; for(int i=0;i<n;i++) lo=MathMin(lo,r[i].low); return lo;
+}
+bool GetH1(string sym, int shift, double &hi, double &lo)
+{
+   MqlRates r[];
+   if(CopyRates(sym,PERIOD_H1,shift,1,r)<1) return false;
+   hi=r[0].high; lo=r[0].low; return true;
+}
 
 //+------------------------------------------------------------------+
 //| 1. LONDON BREAKOUT                                               |
-//| Asian range: 22:00-07:00 UTC. Break at 07:00-10:00 UTC.         |
 //+------------------------------------------------------------------+
-void CheckLondonBreakout()
+void CheckLBSingle(string sym, double pip, bool &fired, string tag)
 {
-   int h = UTCHour();
-   if(h < 7 || h >= 10) return;
-
-   string syms[2];   syms[0] = Sym_EURUSD;   syms[1] = Sym_GBPUSD;
-   bool  &fired[2];  fired[0] = lb_eur_fired; fired[1] = lb_gbp_fired;
-   double pip[2];    pip[0]   = 0.0001;       pip[1]   = 0.0001;
-
-   for(int s = 0; s < 2; s++)
-   {
-      if(fired[s] || HasPosition(syms[s])) continue;
-
-      // Asian range = previous 9 H1 bars (22:00-07:00 — roughly bars at shift 3-11)
-      // Current H1 bar = shift 0 (forming). Asian bars approx shift 3-11.
-      double a_hi = H1High(syms[s], 3, 9);
-      double a_lo = H1Low (syms[s], 3, 9);
-      double rng  = a_hi - a_lo;
-      double pips = rng / pip[s];
-
-      if(pips < 10 || pips > 100) continue;
-
-      double price = SymbolInfoDouble(syms[s], SYMBOL_BID);
-      double buf   = rng * 0.15;
-
-      if(price > a_hi)   // breakout up
-      {
-         double sl = a_lo - buf;
-         OpenBuy(syms[s], sl, Risk_LB, "LB_BUY");
-         fired[s] = true;
-         if(s == 0) lb_eur_fired = true; else lb_gbp_fired = true;
-      }
-      else if(price < a_lo)  // breakout down
-      {
-         double sl = a_hi + buf;
-         OpenSell(syms[s], sl, Risk_LB, "LB_SELL");
-         fired[s] = true;
-         if(s == 0) lb_eur_fired = true; else lb_gbp_fired = true;
-      }
-   }
+   if(fired||HasPosition(sym)) return;
+   double a_hi = H1Hi(sym,3,9);
+   double a_lo = H1Lo(sym,3,9);
+   double rng  = a_hi-a_lo;
+   if(rng/pip<10||rng/pip>100) return;
+   double buf  = rng*0.15;
+   double bid  = SymbolInfoDouble(sym,SYMBOL_BID);
+   double ask  = SymbolInfoDouble(sym,SYMBOL_ASK);
+   if(ask>a_hi)  { DoBuy (sym,a_lo-buf,Risk_LB,tag+"_B"); fired=true; }
+   else if(bid<a_lo){ DoSell(sym,a_hi+buf,Risk_LB,tag+"_S"); fired=true; }
+}
+void CheckLBEur()
+{
+   MqlDateTime dt; TimeToStruct(TimeGMT(),dt);
+   if(dt.day_of_week==2) return;   // skip Tuesday — PF 0.96 (kills overall PF)
+   if(UTCHour()<7||UTCHour()>=10) return;
+   CheckLBSingle(Sym_EURUSD,0.0001,lb_eur_fired,"LB_EUR");
+}
+void CheckLBGbp()
+{
+   MqlDateTime dt; TimeToStruct(TimeGMT(),dt);
+   if(dt.day_of_week==2) return;   // skip Tuesday — PF 1.19 (below threshold)
+   if(UTCHour()<7||UTCHour()>=10) return;
+   CheckLBSingle(Sym_GBPUSD,0.0001,lb_gbp_fired,"LB_GBP");
 }
 
 //+------------------------------------------------------------------+
-//| 2. DAX OPENING RANGE BREAKOUT                                   |
-//| ORB = 08:00 H1 bar. Break at 09:00-12:00 UTC.                   |
+//| 2. DAX ORB                                                       |
 //+------------------------------------------------------------------+
 void CheckDAXOrb()
 {
-   int h = UTCHour();
-   if(h < 9 || h >= 12 || dax_orb_fired || HasPosition(Sym_DAX)) return;
-
-   // 08:00 UTC bar = shift depends on current hour
-   // If it's 09:00, the 08:00 bar is at shift 1. If 10:00, shift 2. Etc.
-   int orb_shift = h - 8;   // bars ago
-   double o, hi, lo, c;
-   if(!GetH1Bar(Sym_DAX, orb_shift, o, hi, lo, c)) return;
-
-   double rng = hi - lo;
-   if(rng < 30 || rng > 300) return;
-
-   double price = SymbolInfoDouble(Sym_DAX, SYMBOL_BID);
-
-   if(price > hi)
-   {
-      double sl = lo;
-      OpenBuy(Sym_DAX, sl, Risk_ORB, "DAX_ORB_BUY");
-      dax_orb_fired = true;
-   }
-   else if(price < lo)
-   {
-      double sl = hi;
-      OpenSell(Sym_DAX, sl, Risk_ORB, "DAX_ORB_SELL");
-      dax_orb_fired = true;
-   }
+   int h=UTCHour();
+   if(h<9||h>=12||dax_orb_fired||HasPosition(Sym_DAX)) return;
+   double hi,lo;
+   if(!GetH1(Sym_DAX,h-8,hi,lo)) return;
+   double rng=hi-lo;
+   if(rng<30||rng>300) return;
+   double bid=SymbolInfoDouble(Sym_DAX,SYMBOL_BID);
+   double ask=SymbolInfoDouble(Sym_DAX,SYMBOL_ASK);
+   if(ask>hi)  { DoBuy (Sym_DAX,lo,Risk_ORB,"DAX_ORB_B"); dax_orb_fired=true; }
+   else if(bid<lo){ DoSell(Sym_DAX,hi,Risk_ORB,"DAX_ORB_S"); dax_orb_fired=true; }
 }
 
 //+------------------------------------------------------------------+
-//| 3. NAS100 US OPEN                                               |
-//| Pre-market bar = 13:00 UTC H1. Break at 14:00-16:00 UTC.        |
+//| 3. NAS100 OPEN (Tue-Fri — Mon PF 1.49, Fri PF 2.25 confirmed)   |
 //+------------------------------------------------------------------+
-void CheckNAS100Open()
+void CheckNAS100()
 {
-   int h = UTCHour();
-   if(h < 14 || h >= 16 || nas_fired || HasPosition(Sym_NAS100)) return;
-
-   // 13:00 UTC bar: if it's 14:00 shift=1, if 15:00 shift=2
-   int ref_shift = h - 13;
-   double o, hi, lo, c;
-   if(!GetH1Bar(Sym_NAS100, ref_shift, o, hi, lo, c)) return;
-
-   double rng = hi - lo;
-   if(rng < 50 || rng > 1500) return;
-
-   double price = SymbolInfoDouble(Sym_NAS100, SYMBOL_BID);
-
-   if(price > hi)
-   {
-      double sl = lo;
-      OpenBuy(Sym_NAS100, sl, Risk_NAS, "NAS_OPEN_BUY");
-      nas_fired = true;
-   }
-   else if(price < lo)
-   {
-      double sl = hi;
-      OpenSell(Sym_NAS100, sl, Risk_NAS, "NAS_OPEN_SELL");
-      nas_fired = true;
-   }
+   MqlDateTime dt; TimeToStruct(TimeGMT(),dt);
+   if(dt.day_of_week<2||dt.day_of_week>5) return;  // Tue=2 to Fri=5
+   int h=UTCHour();
+   if(h<14||h>=16||nas_fired||HasPosition(Sym_NAS100)) return;
+   double hi,lo;
+   if(!GetH1(Sym_NAS100,h-13,hi,lo)) return;
+   double rng=hi-lo;
+   if(rng<50||rng>1500) return;
+   double bid=SymbolInfoDouble(Sym_NAS100,SYMBOL_BID);
+   double ask=SymbolInfoDouble(Sym_NAS100,SYMBOL_ASK);
+   if(ask>hi)  { DoBuy (Sym_NAS100,lo,Risk_NAS,"NAS_B"); nas_fired=true; }
+   else if(bid<lo){ DoSell(Sym_NAS100,hi,Risk_NAS,"NAS_S"); nas_fired=true; }
 }
 
 //+------------------------------------------------------------------+
-//| 4+5. H4 EMA TREND (DAX, Oil)                                    |
-//| EMA 10/20 cross + ADX > 25                                      |
+//| 4. NATGAS OPEN (PF 1.98 @0.2R trail, 60.5% win — all days)      |
 //+------------------------------------------------------------------+
-void CheckH4EMA()
+void CheckNatGas()
 {
-   CheckH4Single(Sym_DAX,  Risk_H4, 8,  16, h4_dax_fired, "DAX_H4");
-   CheckH4Single(Sym_OIL,  Risk_H4, 14, 21, h4_oil_fired, "OIL_H4");
+   int h=UTCHour();
+   if(h<14||h>=16||ng_fired||HasPosition(Sym_NATGAS)) return;
+   double hi,lo;
+   if(!GetH1(Sym_NATGAS,h-13,hi,lo)) return;
+   double rng=hi-lo;
+   if(rng<0.03||rng>1.0) return;
+   double bid=SymbolInfoDouble(Sym_NATGAS,SYMBOL_BID);
+   double ask=SymbolInfoDouble(Sym_NATGAS,SYMBOL_ASK);
+   if(ask>hi)  { DoBuy (Sym_NATGAS,lo,Risk_NG,"NG_B"); ng_fired=true; }
+   else if(bid<lo){ DoSell(Sym_NATGAS,hi,Risk_NG,"NG_S"); ng_fired=true; }
 }
 
-void CheckH4Single(string sym, double risk, int sess_start, int sess_end,
-                   bool &fired, string tag)
+//+------------------------------------------------------------------+
+//| 5. NATGAS H1 EMA (PF 1.75, 59.5% win — fallback if ORB skipped) |
+//| Only fires if the 14:00 ORB didn't trigger today                 |
+//+------------------------------------------------------------------+
+void CheckNatGasH1()
 {
-   int h = UTCHour();
-   if(h < sess_start || h >= sess_end || fired || HasPosition(sym)) return;
+   if(ng_fired||ng_h1_fired||HasPosition(Sym_NATGAS)) return;
+   int h=UTCHour();
+   if(h<14||h>=21) return;
 
-   // EMA 10/20 on H4 — use iMA indicator
-   int ema10_h = iMA(sym, PERIOD_H4, 10, 0, MODE_EMA, PRICE_CLOSE);
-   int ema20_h = iMA(sym, PERIOD_H4, 20, 0, MODE_EMA, PRICE_CLOSE);
-   if(ema10_h == INVALID_HANDLE || ema20_h == INVALID_HANDLE) return;
+   int h10=iMA(Sym_NATGAS,PERIOD_H1,10,0,MODE_EMA,PRICE_CLOSE);
+   int h20=iMA(Sym_NATGAS,PERIOD_H1,20,0,MODE_EMA,PRICE_CLOSE);
+   int ha =iATR(Sym_NATGAS,PERIOD_H1,14);
+   int hd =iADX(Sym_NATGAS,PERIOD_H1,14);
+   if(h10==INVALID_HANDLE||h20==INVALID_HANDLE||
+      ha ==INVALID_HANDLE||hd ==INVALID_HANDLE) return;
 
-   double ema10[3], ema20[3];
-   if(CopyBuffer(ema10_h, 0, 0, 3, ema10) < 3) return;
-   if(CopyBuffer(ema20_h, 0, 0, 3, ema20) < 3) return;
-   IndicatorRelease(ema10_h); IndicatorRelease(ema20_h);
+   double e10[3],e20[3],atr[2],adx[2];
+   bool ok = CopyBuffer(h10,0,0,3,e10)>=3 &&
+             CopyBuffer(h20,0,0,3,e20)>=3 &&
+             CopyBuffer(ha, 0,0,2,atr)>=2 &&
+             CopyBuffer(hd, 0,0,2,adx)>=2;
+   IndicatorRelease(h10); IndicatorRelease(h20);
+   IndicatorRelease(ha);  IndicatorRelease(hd);
+   if(!ok||adx[1]<20) return;
 
-   // ADX filter
-   int adx_h = iADX(sym, PERIOD_H4, 14);
-   if(adx_h == INVALID_HANDLE) return;
-   double adx[2];
-   if(CopyBuffer(adx_h, 0, 0, 2, adx) < 2) return;
-   IndicatorRelease(adx_h);
-   if(adx[1] < 25) return;   // index 1 = last completed bar
+   bool bull = e10[1]>e20[1] && e10[2]<=e20[2];
+   bool bear = e10[1]<e20[1] && e10[2]>=e20[2];
+   if(!bull&&!bear) return;
 
-   // ATR for SL sizing
-   int atr_h = iATR(sym, PERIOD_H4, 14);
-   if(atr_h == INVALID_HANDLE) return;
-   double atr[2];
-   if(CopyBuffer(atr_h, 0, 0, 2, atr) < 2) return;
-   IndicatorRelease(atr_h);
+   double a=atr[1];
+   if(bull){ DoBuy (Sym_NATGAS,SymbolInfoDouble(Sym_NATGAS,SYMBOL_ASK)-1.5*a,Risk_NG,"NG_H1_B"); ng_h1_fired=true; }
+   else    { DoSell(Sym_NATGAS,SymbolInfoDouble(Sym_NATGAS,SYMBOL_BID)+1.5*a,Risk_NG,"NG_H1_S"); ng_h1_fired=true; }
+}
 
-   double price = SymbolInfoDouble(sym, SYMBOL_BID);
-   double atr_val = atr[1];
+//+------------------------------------------------------------------+
+//| 6-11. H4 EMA (DAX, Oil, UK100, EURCHF, GBPJPY, USDCHF)          |
+//+------------------------------------------------------------------+
+void CheckH4(string sym, double risk, int s_start, int s_end,
+             bool &fired, string tag)
+{
+   int h=UTCHour();
+   bool in_sess = (s_start<=s_end) ? (h>=s_start&&h<s_end)
+                                    : (h>=s_start||h<s_end);
+   if(!in_sess||fired||HasPosition(sym)) return;
 
-   // Bull cross: ema10 crossed above ema20 on last completed bar
-   bool bull_cross = (ema10[1] > ema20[1] && ema10[2] <= ema20[2]);
-   bool bear_cross = (ema10[1] < ema20[1] && ema10[2] >= ema20[2]);
+   int h10=iMA(sym,PERIOD_H4,10,0,MODE_EMA,PRICE_CLOSE);
+   int h20=iMA(sym,PERIOD_H4,20,0,MODE_EMA,PRICE_CLOSE);
+   int ha =iATR(sym,PERIOD_H4,14);
+   int hd =iADX(sym,PERIOD_H4,14);
+   if(h10==INVALID_HANDLE||h20==INVALID_HANDLE||
+      ha ==INVALID_HANDLE||hd ==INVALID_HANDLE) return;
 
-   if(bull_cross)
-   {
-      double sl = price - 1.5 * atr_val;
-      OpenBuy(sym, sl, risk, tag + "_BUY");
-      fired = true;
-   }
-   else if(bear_cross)
-   {
-      double sl = price + 1.5 * atr_val;
-      OpenSell(sym, sl, risk, tag + "_SELL");
-      fired = true;
-   }
+   double e10[3],e20[3],atr[2],adx[2];
+   bool ok = CopyBuffer(h10,0,0,3,e10)>=3 &&
+             CopyBuffer(h20,0,0,3,e20)>=3 &&
+             CopyBuffer(ha, 0,0,2,atr)>=2 &&
+             CopyBuffer(hd, 0,0,2,adx)>=2;
+   IndicatorRelease(h10); IndicatorRelease(h20);
+   IndicatorRelease(ha);  IndicatorRelease(hd);
+   if(!ok||adx[1]<25) return;
+
+   bool bull = e10[1]>e20[1] && e10[2]<=e20[2];
+   bool bear = e10[1]<e20[1] && e10[2]>=e20[2];
+   if(!bull&&!bear) return;
+
+   double a=atr[1];
+   if(bull){ DoBuy (sym,SymbolInfoDouble(sym,SYMBOL_ASK)-1.5*a,risk,tag+"_B"); fired=true; }
+   else    { DoSell(sym,SymbolInfoDouble(sym,SYMBOL_BID)+1.5*a,risk,tag+"_S"); fired=true; }
 }
 //+------------------------------------------------------------------+
