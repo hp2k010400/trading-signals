@@ -60,17 +60,17 @@ CTrade        trade;
 CPositionInfo pos;
 
 //--- Symbol inputs
-input string  Sym_EURUSD = "EURUSD";
-input string  Sym_GBPUSD = "GBPUSD";
-input string  Sym_DAX    = "GER40.cash";
-input string  Sym_NAS100 = "US100.cash";
-input string  Sym_SP500  = "US500.cash";
-input string  Sym_OIL    = "USOIL.cash";
-input string  Sym_NATGAS = "XNGUSD";
-input string  Sym_UK100  = "UK100.cash";
-input string  Sym_EURCHF = "EURCHF";
-input string  Sym_GBPJPY = "GBPJPY";
-input string  Sym_USDCHF = "USDCHF";
+input string  Sym_EURUSD = "EURUSD";       // confirmed
+input string  Sym_GBPUSD = "GBPUSD";       // confirmed
+input string  Sym_DAX    = "GER40.cash";   // confirmed
+input string  Sym_NAS100 = "US100.cash";   // confirmed
+input string  Sym_SP500  = "sp500";        // confirm exact name — could be US500.cash
+input string  Sym_OIL    = "";             // not available — Oil H4 EMA disabled
+input string  Sym_NATGAS = "XNGUSD";       // CONFIRM — search XNGUSD/NATGAS/NG in Market Watch
+input string  Sym_UK100  = "UK100.cash";   // confirmed
+input string  Sym_EURCHF = "EURCHF";       // likely correct — confirm in Market Watch
+input string  Sym_GBPJPY = "GBPJPY";       // likely correct — confirm in Market Watch
+input string  Sym_USDCHF = "USDCHF";       // confirmed
 
 //--- Risk per trade (% of account balance)
 input double  Risk_LB     = 0.4;    // London Breakout
@@ -186,7 +186,7 @@ void OnTimer()
 
    // ── H4 EMA Trend ─────────────────────────────────────────────────
    CheckH4(Sym_DAX,    Risk_H4, 8,  16, h4_dax_fired,    "H4_DAX");
-   CheckH4(Sym_OIL,    Risk_H4, 14, 21, h4_oil_fired,    "H4_OIL");
+   // Oil H4 EMA disabled — USOIL not available on this broker
    CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100");
    CheckH4(Sym_EURCHF, Risk_H4, 8,  17, h4_eurchf_fired, "H4_EURCHF");
    CheckH4(Sym_GBPJPY, Risk_H4, 0,  21, h4_gbpjpy_fired, "H4_GBPJPY");
