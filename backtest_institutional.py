@@ -540,7 +540,7 @@ def run_pairs():
     merged['ratio'] = np.log(merged['nq'] / merged['es'])
     merged['z']     = (merged['ratio'] - merged['ratio'].rolling(40).mean()) / \
                        merged['ratio'].rolling(40).std()
-    merged['atr']   = nq['atr'].reindex(merged.index).fillna(method='ffill')
+    merged['atr']   = nq['atr'].reindex(merged.index).ffill()
 
     trades = []; fired = set()
 
