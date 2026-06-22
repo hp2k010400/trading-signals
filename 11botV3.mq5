@@ -39,18 +39,30 @@
 //|                                                                   |
 //| ── H4 EMA TREND (Trail 0.3R) ───────────────────────────────── ─|
 //| 24.  DAX H4 EMA       GER40            08:00-16:00               |
-//| 25.  Oil H4 EMA       USOIL.cash       14:00-21:00               |
+//| 25.  Oil H4 EMA       USOIL.cash       14:00-21:00  (disabled)   |
 //| 26.  UK100 H4 EMA     UK100.cash       08:00-16:00               |
 //| 27.  EURCHF H4 EMA    EURCHF           08:00-17:00               |
 //| 28.  GBPJPY H4 EMA    GBPJPY           00:00-21:00               |
 //| 29.  USDCHF H4 EMA    USDCHF           08:00-17:00               |
+//| 30.  EURUSD H4 EMA    EURUSD           07:00-17:00  PF 2.04      |
+//| 31.  GBPUSD H4 EMA    GBPUSD           07:00-17:00  PF 1.64      |
+//| 32.  EURJPY H4 EMA    EURJPY           07:00-17:00  PF 1.88      |
+//|                                                                   |
+//| ── DONCHIAN 20-DAY BREAKOUT (Trail 0.4R) ─────────────────────── |
+//| 33.  Donchian DAX     GER40            08:00-17:00  PF 2.51      |
+//| 34.  Donchian UK100   UK100.cash       08:00-17:00  PF 1.58      |
+//| 35.  Donchian NAS100  US100.cash       14:00-21:00  PF 1.89      |
+//| 36.  Donchian Gold    XAUUSD           08:00-20:00  PF 2.04      |
+//|                                                                   |
+//| ── GOLD LSR (Trail 0.2R) ─────────────────────────────────────── |
+//| 37.  Gold LSR         XAUUSD           08:00-20:00  PF 1.69      |
 //|                                                                   |
 //| ── SAFETY ─────────────────────────────────────────────────────  |
 //|  Daily loss circuit breaker: stops NEW entries at 3.5% day loss  |
 //|  (FTMO daily limit = 5%. Buffer = 1.5%)                          |
 //+------------------------------------------------------------------+
 #property copyright "GC4C Signal Bot"
-#property version   "4.00"
+#property version   "5.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -71,6 +83,8 @@ input string  Sym_UK100  = "UK100.cash";   // confirmed
 input string  Sym_EURCHF = "EURCHF";       // likely correct — confirm in Market Watch
 input string  Sym_GBPJPY = "GBPJPY";       // likely correct — confirm in Market Watch
 input string  Sym_USDCHF = "USDCHF";       // confirmed
+input string  Sym_EURJPY = "EURJPY";       // H4 EMA — confirm in Market Watch
+input string  Sym_GOLD   = "XAUUSD";       // confirmed in Market Watch
 
 //--- Risk per trade (% of account balance)
 input double  Risk_LB     = 0.4;    // London Breakout
@@ -86,10 +100,15 @@ input double  Risk_AMD    = 0.4;    // AMD manipulation reversal
 input double  Risk_LSR    = 0.3;    // Liquidity sweep reversal
 input double  Risk_FVG    = 0.3;    // Fair value gap
 input double  Risk_H4     = 0.75;   // H4 EMA trend
+input double  Risk_DCH    = 0.5;    // Donchian DAX + UK100
+input double  Risk_DCH_US = 0.75;   // Donchian NAS100
+input double  Risk_DCH_GOLD = 0.4;  // Donchian Gold
+input double  Risk_LSR_GOLD = 0.3;  // Gold LSR
 
 //--- Trail multipliers (from backtest_optimise2.py sweep)
 input double  Trail_ORB = 0.2;   // ORB / LB / PDH / PWH / AMD / LSR / FVG
 input double  Trail_H4  = 0.3;   // H4 EMA trend strategies
+input double  Trail_DCH = 0.4;   // Donchian 20-day breakout (wider — multi-day holds)
 
 //--- Safety
 input double  Max_Daily_Loss = 3.5;  // Stop new entries if daily loss >= this %
@@ -113,6 +132,11 @@ bool fvg_eur_fired;
 //--- H4 EMA
 bool h4_dax_fired, h4_oil_fired, h4_uk100_fired;
 bool h4_eurchf_fired, h4_gbpjpy_fired, h4_usdchf_fired;
+bool h4_eurusd_fired, h4_gbpusd_fired, h4_eurjpy_fired;
+//--- Donchian 20-day
+bool dch_dax_fired, dch_uk100_fired, dch_nas_fired, dch_gold_fired;
+//--- Gold LSR
+bool lsr_gold_fired;
 
 datetime last_reset = 0;
 
@@ -132,7 +156,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   Print("11botV3 started — 29 strategies | Circuit breaker: ",
+   Print("11botV3 started — 37 strategies | Circuit breaker: ",
          Max_Daily_Loss, "% daily loss limit");
    return INIT_SUCCEEDED;
 }
@@ -191,6 +215,18 @@ void OnTimer()
    CheckH4(Sym_EURCHF, Risk_H4, 8,  17, h4_eurchf_fired, "H4_EURCHF");
    CheckH4(Sym_GBPJPY, Risk_H4, 0,  21, h4_gbpjpy_fired, "H4_GBPJPY");
    CheckH4(Sym_USDCHF, Risk_H4, 8,  17, h4_usdchf_fired, "H4_USDCHF");
+   CheckH4(Sym_EURUSD, Risk_H4, 7,  17, h4_eurusd_fired, "H4_EURUSD");
+   CheckH4(Sym_GBPUSD, Risk_H4, 7,  17, h4_gbpusd_fired, "H4_GBPUSD");
+   CheckH4(Sym_EURJPY, Risk_H4, 7,  17, h4_eurjpy_fired, "H4_EURJPY");
+
+   // ── Donchian 20-Day Breakout ──────────────────────────────────────
+   CheckDonchian(Sym_DAX,    Risk_DCH,      8,  17, dch_dax_fired,   "DCH_DAX");
+   CheckDonchian(Sym_UK100,  Risk_DCH,      8,  17, dch_uk100_fired, "DCH_UK100");
+   CheckDonchian(Sym_NAS100, Risk_DCH_US,  14,  21, dch_nas_fired,   "DCH_NAS");
+   CheckDonchian(Sym_GOLD,   Risk_DCH_GOLD, 8,  20, dch_gold_fired,  "DCH_GOLD");
+
+   // ── Gold LSR ─────────────────────────────────────────────────────
+   CheckLSR(Sym_GOLD, Risk_LSR_GOLD, 8, 20, lsr_gold_fired, "LSR_GOLD");
 }
 
 //+------------------------------------------------------------------+
@@ -234,6 +270,9 @@ void ResetDaily()
    fvg_eur_fired = false;
    h4_dax_fired = h4_oil_fired = h4_uk100_fired = false;
    h4_eurchf_fired = h4_gbpjpy_fired = h4_usdchf_fired = false;
+   h4_eurusd_fired = h4_gbpusd_fired = h4_eurjpy_fired = false;
+   dch_dax_fired = dch_uk100_fired = dch_nas_fired = dch_gold_fired = false;
+   lsr_gold_fired = false;
 
    last_reset         = today;
    g_day_open_equity  = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -307,7 +346,9 @@ double GetATR(string sym, ENUM_TIMEFRAMES tf, int period)
 //+------------------------------------------------------------------+
 double TrailMult(string comment)
 {
-   return (StringFind(comment,"H4_")>=0) ? Trail_H4 : Trail_ORB;
+   if(StringFind(comment,"H4_") >=0) return Trail_H4;
+   if(StringFind(comment,"DCH_")>=0) return Trail_DCH;
+   return Trail_ORB;
 }
 
 void SetBest(ulong t, double p)
@@ -663,5 +704,50 @@ void CheckH4(string sym, double risk, int s_start, int s_end,
    double a=atr[1];
    if(bull){DoBuy (sym,SymbolInfoDouble(sym,SYMBOL_ASK)-1.5*a,risk,tag+"_B");fired=true;}
    else    {DoSell(sym,SymbolInfoDouble(sym,SYMBOL_BID)+1.5*a,risk,tag+"_S");fired=true;}
+}
+
+//+------------------------------------------------------------------+
+//| 33-36. DONCHIAN 20-DAY BREAKOUT                                  |
+//| Classic Turtle / institutional level breakout.                    |
+//| Entry when price breaks 20-day high or low.                      |
+//| Filter: H4 ADX > 25 — only in genuine trending conditions.       |
+//| SL: 2.0x H1 ATR. Trail: 0.4R (wider — holds multi-day trends)   |
+//| PF 1.58-2.51 across DAX/UK100/NAS100/Gold in 2-year backtest     |
+//+------------------------------------------------------------------+
+void CheckDonchian(string sym, double risk, int s_start, int s_end,
+                   bool &fired, string tag)
+{
+   int h=UTCHour();
+   bool in_sess=(s_start<=s_end)?(h>=s_start&&h<s_end):(h>=s_start||h<s_end);
+   if(!in_sess||fired||HasPosition(sym)) return;
+
+   // 20-day rolling high/low — last 20 completed daily bars
+   double hi20[20], lo20[20];
+   ArraySetAsSeries(hi20,true); ArraySetAsSeries(lo20,true);
+   if(CopyHigh(sym,PERIOD_D1,1,20,hi20)<20) return;
+   if(CopyLow (sym,PERIOD_D1,1,20,lo20)<20) return;
+   double d20hi=hi20[ArrayMaximum(hi20,0,20)];
+   double d20lo=lo20[ArrayMinimum(lo20,0,20)];
+
+   // ADX filter on H4 — only trade genuine trends
+   int h_adx=iADX(sym,PERIOD_H4,14);
+   if(h_adx==INVALID_HANDLE) return;
+   double adx_v[2]; ArraySetAsSeries(adx_v,true);
+   bool ok=CopyBuffer(h_adx,0,0,2,adx_v)>=2;
+   IndicatorRelease(h_adx);
+   if(!ok||adx_v[0]<25) return;
+
+   // ATR on H1 for SL sizing (wider than other strategies = fewer lots = multi-day hold)
+   double a=GetATR(sym,PERIOD_H1,14);
+   if(a<=0) return;
+
+   SymbolSelect(sym,true);
+   double bid=SymbolInfoDouble(sym,SYMBOL_BID);
+   double ask=SymbolInfoDouble(sym,SYMBOL_ASK);
+
+   if(ask>d20hi)
+      {DoBuy (sym,ask-2.0*a,risk,tag+"_B"); fired=true;}
+   else if(bid<d20lo)
+      {DoSell(sym,bid+2.0*a,risk,tag+"_S"); fired=true;}
 }
 //+------------------------------------------------------------------+
