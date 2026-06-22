@@ -417,6 +417,37 @@ def run_month_end(key, tag, risk=0.004):
             trades.append(trade(df,p,direction,b['close'],sl,TRAIL_ORB,risk))
     return trades
 
+# ── AMD manipulation reversal ─────────────────────────────────────────────────
+def run_amd(key, tag, hs, he, asian_hrs=(22,7), risk=0.004):
+    df=load_h1(key)
+    if df is None: return []
+    atr=calc_atr(df,14); trades=[]
+    dates=sorted(set(df.index.normalize().date))
+    for date in dates:
+        day=pd.Timestamp(date,tz='UTC'); prev=day-pd.Timedelta(days=1)
+        if asian_hrs[0]>asian_hrs[1]:
+            rdf=df[(df.index>=prev+pd.Timedelta(hours=asian_hrs[0]))&
+                   (df.index<day+pd.Timedelta(hours=asian_hrs[1]))]
+        else:
+            rdf=df[(df.index>=day+pd.Timedelta(hours=asian_hrs[0]))&
+                   (df.index<day+pd.Timedelta(hours=asian_hrs[1]))]
+        if len(rdf)<3: continue
+        a_hi=rdf['high'].max(); a_lo=rdf['low'].min(); rng=a_hi-a_lo
+        if rng<=0: continue
+        edf=df[(df.index>=day+pd.Timedelta(hours=hs))&
+               (df.index<day+pd.Timedelta(hours=he))]
+        a_s=atr.reindex(edf.index,method='ffill'); fired=False
+        for j in range(len(edf)):
+            if fired: break
+            b=edf.iloc[j]; av=a_s.iloc[min(j,len(a_s)-1)]
+            p=ipos(df,edf.index[j])
+            if p<0 or av<=0: continue
+            if b['high']>a_hi and b['close']<a_hi and (b['high']-a_hi)<rng*0.6:
+                trades.append(trade(df,p,-1,b['close'],b['high']+av*0.1,TRAIL_ORB,risk)); fired=True
+            elif b['low']<a_lo and b['close']>a_lo and (a_lo-b['low'])<rng*0.6:
+                trades.append(trade(df,p,1,b['close'],b['low']-av*0.1,TRAIL_ORB,risk)); fired=True
+    return trades
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     W=70
