@@ -36,7 +36,8 @@ YFSYMS = {
     'EURUSD': 'EURUSD=X', 'GBPUSD': 'GBPUSD=X',
     'GBPJPY': 'GBPJPY=X', 'EURJPY': 'EURJPY=X',
     'DAX':    '^GDAXI',   'UK100':  '^FTSE',
-    'GOLD':   'GC=F',     'NATGAS': 'NG=F',
+    'NAS100': 'NQ=F',     'GOLD':   'GC=F',
+    'NATGAS': 'NG=F',
 }
 
 _cache = {}
@@ -451,6 +452,8 @@ if __name__ == '__main__':
 
     print("\n── Donchian 20-Day Breakout ─────────────────────────────────────────")
     r('Donchian DAX',    run_donchian('DAX',   'Donchian DAX',    hs=8,  he=17, risk=0.005))
+    r('Donchian UK100',  run_donchian('UK100', 'Donchian UK100',  hs=8,  he=17, risk=0.005))
+    r('Donchian NAS100', run_donchian('NAS100','Donchian NAS100', hs=14, he=21, risk=0.0075))
     r('Donchian Gold',   run_donchian('GOLD',  'Donchian Gold',   hs=8,  he=20, risk=0.004))
     r('Donchian NatGas', run_donchian('NATGAS','Donchian NatGas', hs=14, he=21, risk=0.004))
 
@@ -458,6 +461,9 @@ if __name__ == '__main__':
     r('EURUSD H4 EMA', run_h4_ema('EURUSD','EURUSD H4 EMA', hs=7, he=17, risk=0.0075))
     r('GBPUSD H4 EMA', run_h4_ema('GBPUSD','GBPUSD H4 EMA', hs=7, he=17, risk=0.0075))
     r('EURJPY H4 EMA', run_h4_ema('EURJPY','EURJPY H4 EMA', hs=7, he=17, risk=0.0075))
+
+    print("\n── AMD on UK100 ─────────────────────────────────────────────────────")
+    r('AMD UK100', run_amd('UK100','AMD UK100', hs=8, he=10, asian_hrs=(22,7), risk=0.004))
 
     print("\n── Month-End Rebalancing ────────────────────────────────────────────")
     r('Month-End EUR', run_month_end('EURUSD','Month-End EUR', risk=0.004))
