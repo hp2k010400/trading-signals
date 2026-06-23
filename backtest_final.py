@@ -1,6 +1,6 @@
 """
 backtest_final.py — DEFINITIVE 11botV3 v5.00 system backtest
-All 37 strategies, 2-year H1 data.
+36 strategies (PDH_UK100 removed; D1 bias filter on PDH_DAX + PDH_SP5), 2-year H1 data.
 
 This script properly accounts for:
   1. HasPosition — only ONE trade per symbol at a time (live constraint)
@@ -36,7 +36,7 @@ RISKS = {
     'LB_EUR': 0.004,  'LB_GBP': 0.004,
     'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004, 'NG_ORB': 0.0075,
     'NG_H1': 0.0075,
-    'PDH_DAX': 0.005,  'PDH_UK100': 0.005, 'PDH_GBPJPY': 0.004,
+    'PDH_DAX': 0.005,  'PDH_GBPJPY': 0.004,
     'PDH_NAS': 0.004,  'PDH_SP5': 0.004,   'PDH_NG': 0.004,
     'PWH_DAX': 0.004,  'PWH_UK100': 0.004,
     'PWH_NAS': 0.003,  'PWH_SP5': 0.003,
@@ -237,10 +237,25 @@ def run_ng_h1(tag):
         fired.add(day)
     return signals
 
-def run_pdh(key, tag, hs, he):
+def get_d1_bias(key):
+    """Returns a dict of {date: bias} where bias is +1 (bullish) or -1 (bearish).
+    Uses D1 close vs 20-SMA. Applied to PDH_DAX and PDH_SP5 per backtest results."""
+    df=load_daily(key)
+    if df is None: return {}
+    sma=df['close'].rolling(20).mean()
+    bias_raw=np.sign(df['close']-sma)
+    result={}
+    for i in range(1,len(df)):
+        d=df.index[i].date()
+        v=bias_raw.iloc[i-1]  # use PREVIOUS day's bias (no lookahead)
+        if not np.isnan(v): result[d]=int(v)
+    return result
+
+def run_pdh(key, tag, hs, he, use_bias=False):
     df=load_h1(key)
     if df is None: return []
     atr=calc_atr(df,14); signals=[]; risk=RISKS[tag]
+    bias_map=get_d1_bias(key) if use_bias else {}
     dates=sorted(set(df.index.normalize().date))
     for date in dates:
         day=pd.Timestamp(date,tz='UTC'); prev=day-pd.Timedelta(days=1)
@@ -254,13 +269,14 @@ def run_pdh(key, tag, hs, he):
         rng=pdh-pdl
         if not (a.iloc[0]*0.4<=rng<=a.iloc[0]*4.0): continue
         buf=a.iloc[0]*0.05
+        bias=bias_map.get(date, 0)
         for j in range(len(edf)):
             b=edf.iloc[j]; av=a.iloc[min(j,len(a)-1)]
             p=ipos(df,edf.index[j])
             if p<0 or av<=0: continue
-            if b['high']>pdh+buf:
+            if b['high']>pdh+buf and (not use_bias or bias==1):
                 signals.append(make_signal(df,p,1,b['close'],b['close']-1.5*av,TRAIL_ORB,risk,key,tag)); break
-            if b['low']<pdl-buf:
+            if b['low']<pdl-buf and (not use_bias or bias==-1):
                 signals.append(make_signal(df,p,-1,b['close'],b['close']+1.5*av,TRAIL_ORB,risk,key,tag)); break
     return signals
 
@@ -466,14 +482,15 @@ if __name__ == '__main__':
     W = 65
     print("\n" + "="*W)
     print("  11botV3 v5.00 — DEFINITIVE FINAL BACKTEST")
-    print("  37 strategies | HasPosition simulated | Slippage included")
+    print("  36 strategies | PDH_UK100 removed | D1 bias on PDH_DAX+SP5")
+    print("  HasPosition simulated | Slippage included")
     print("="*W)
     print("\nLoading data (this takes ~2 mins)...")
     for k in YFSYMS: load_h1(k)
 
     all_signals = []
 
-    print("\nRunning all 37 strategies...")
+    print("\nRunning all 36 strategies...")
 
     # London Breakout
     all_signals += run_lb('EURUSD','LB_EUR', skip_dow={1})
@@ -484,12 +501,11 @@ if __name__ == '__main__':
     all_signals += run_orb('SP500', 'SP5_ORB',13,14, 16,   5,  300, {0})
     all_signals += run_orb('NATGAS','NG_ORB', 13,14, 16,0.03,  1.0,  set())
     all_signals += run_ng_h1('NG_H1')
-    # PDH
-    all_signals += run_pdh('DAX',   'PDH_DAX',    8,17)
-    all_signals += run_pdh('UK100', 'PDH_UK100',  8,17)
+    # PDH (UK100 removed — PF 1.19 too low; DAX+SP5 use D1 bias filter)
+    all_signals += run_pdh('DAX',   'PDH_DAX',    8,17, use_bias=True)
     all_signals += run_pdh('GBPJPY','PDH_GBPJPY', 7,17)
     all_signals += run_pdh('NAS100','PDH_NAS',   14,21)
-    all_signals += run_pdh('SP500', 'PDH_SP5',   14,21)
+    all_signals += run_pdh('SP500', 'PDH_SP5',   14,21, use_bias=True)
     all_signals += run_pdh('NATGAS','PDH_NG',    14,21)
     # PWH
     all_signals += run_pwh('DAX',   'PWH_DAX',   8,17)
