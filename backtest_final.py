@@ -34,8 +34,8 @@ TRAIL_DCH = 0.40
 
 RISKS = {
     'LB_EUR': 0.004,  'LB_GBP': 0.004,
-    'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004, 'NG_ORB': 0.0075,
-    'NG_H1': 0.0075,
+    'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004, 'NG_ORB': 0.004,
+    'NG_H1': 0.004,
     'PDH_DAX': 0.005,  'PDH_GBPJPY': 0.004,
     'PDH_NAS': 0.004,  'PDH_SP5': 0.004,   'PDH_NG': 0.004,
     'PWH_DAX': 0.004,  'PWH_UK100': 0.004,
@@ -482,7 +482,7 @@ if __name__ == '__main__':
     W = 65
     print("\n" + "="*W)
     print("  11botV3 v5.00 — DEFINITIVE FINAL BACKTEST")
-    print("  36 strategies | PDH_UK100 removed | D1 bias on PDH_DAX+SP5")
+    print("  36 strategies | PDH_UK100 removed | D1 bias on PDH_DAX+SP5 | NatGas risk 0.4%")
     print("  HasPosition simulated | Slippage included")
     print("="*W)
     print("\nLoading data (this takes ~2 mins)...")
