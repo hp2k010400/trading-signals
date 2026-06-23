@@ -114,7 +114,9 @@ def get_bias(bias_series, date):
     prev = date - pd.Timedelta(days=1)
     candidates = bias_series[bias_series.index.normalize() <= prev]
     if len(candidates) == 0: return 0
-    return int(candidates.iloc[-1])
+    val = candidates.iloc[-1]
+    if pd.isna(val): return 0  # not enough history for SMA yet
+    return int(val)
 
 # ── Strategy runners ──────────────────────────────────────────────────────────
 
