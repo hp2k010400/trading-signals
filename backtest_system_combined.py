@@ -564,17 +564,15 @@ def run_portfolio(print_table=True):
 
     if print_table: print("\n── PDH/PDL Breakout ─────────────────────────────────────────────")
     r('PDH_DAX',    run_pdh('DAX',   'PDH_DAX',    8, 17))
-    r('PDH_UK100',  run_pdh('UK100', 'PDH_UK100',  8, 17))
     r('PDH_GBPJPY', run_pdh('GBPJPY','PDH_GBPJPY', 7, 17))
     r('PDH_NAS',    run_pdh('NAS100','PDH_NAS',   14, 21))
     r('PDH_SP5',    run_pdh('SP500', 'PDH_SP5',   14, 21))
-    r('PDH_NG',     run_pdh('NATGAS','PDH_NG',    14, 21))
+    # PDH_UK100 removed (PF 1.07) | PDH_NG removed (PF 1.00)
 
     if print_table: print("\n── PWH/PWL Breakout ─────────────────────────────────────────────")
-    r('PWH_DAX',   run_pwh('DAX',   'PWH_DAX',    8, 17))
     r('PWH_UK100', run_pwh('UK100', 'PWH_UK100',  8, 17))
     r('PWH_NAS',   run_pwh('NAS100','PWH_NAS',   14, 21))
-    r('PWH_SP5',   run_pwh('SP500', 'PWH_SP5',   14, 21))
+    # PWH_DAX removed (PF 1.11) | PWH_SP5 removed (PF 0.89)
 
     if print_table: print("\n── AMD Manipulation Reversal ────────────────────────────────────")
     r('AMD_EUR', run_amd('EURUSD','AMD_EUR', 7,  9, asian_hrs=(22,7)))
@@ -592,18 +590,17 @@ def run_portfolio(print_table=True):
     if print_table: print("\n── H4 EMA Trend ─────────────────────────────────────────────────")
     r('H4_DAX',    run_h4('DAX',   'H4_DAX',    8, 16))
     r('H4_UK100',  run_h4('UK100', 'H4_UK100',  8, 16))
-    r('H4_EURCHF', run_h4('EURCHF','H4_EURCHF', 8, 17))
     r('H4_GBPJPY', run_h4('GBPJPY','H4_GBPJPY', 0, 21))
     r('H4_USDCHF', run_h4('USDCHF','H4_USDCHF', 8, 17))
     r('H4_EURUSD', run_h4('EURUSD','H4_EURUSD', 7, 17))
     r('H4_GBPUSD', run_h4('GBPUSD','H4_GBPUSD', 7, 17))
     r('H4_EURJPY', run_h4('EURJPY','H4_EURJPY', 7, 17))
+    # H4_EURCHF removed (PF 1.00)
 
     if print_table: print("\n── Donchian 20-Day Breakout ─────────────────────────────────────")
     r('DCH_DAX',   run_donchian('DAX',   'DCH_DAX',    8, 17))
-    r('DCH_UK100', run_donchian('UK100', 'DCH_UK100',  8, 17))
     r('DCH_NAS',   run_donchian('NAS100','DCH_NAS',   14, 21))
-    r('DCH_GOLD',  run_donchian('GOLD',  'DCH_GOLD',   8, 20))
+    # DCH_UK100 removed (PF 1.21) | DCH_GOLD removed (PF 1.03)
 
     if print_table: print("\n── Gold LSR ─────────────────────────────────────────────────────")
     r('LSR_GOLD',  run_lsr('GOLD', 'LSR_GOLD', 8, 20))
@@ -628,52 +625,32 @@ def run_portfolio(print_table=True):
 if __name__ == '__main__':
     W = 65
 
-    # ── Run 1: no partial close ──────────────────────────────────────────────
+    # ── Run clean v5.10 system ───────────────────────────────────────────────
     PARTIAL_R = None
     print("\n" + "="*W)
-    print("  11botV3 Backtest — NO PARTIAL CLOSE (trail only)")
+    print("  11botV3 v5.10 — Live Strategy Set (2-Year Backtest)")
     print("="*W)
     s1 = run_portfolio(print_table=True)
 
-    print("\n" + "="*W)
-    print("  SUMMARY — No Partial Close")
-    print("="*W)
-    print(f"  Trades: {s1['n']}  |  WR: {s1['wr']:.1f}%  |  PF: {s1['pf']:.2f}")
-    print(f"  Avg win: £{s1['avg_w']:,.0f}  |  Avg loss: £{s1['avg_l']:,.0f}  "
-          f"|  Ratio: {s1['avg_w']/s1['avg_l']:.2f}R" if s1['avg_l'] else "")
-    print(f"  Monthly: £{s1['mo']:,.0f}  |  2yr total: £{s1['total']:,.0f}")
-
-    # ── Run 2: partial close at 1R ───────────────────────────────────────────
-    PARTIAL_R = 1.0
-    _cache.clear()   # clear data cache so sim re-runs with new PARTIAL_R
-    print("\n" + "="*W)
-    print("  11botV3 Backtest — PARTIAL CLOSE AT 1R (50% locked, 50% trails)")
-    print("="*W)
-    s2 = run_portfolio(print_table=False)  # skip per-strategy table, just summary
+    strong = sorted([x for x in results if x['pf']>=1.5], key=lambda x:-x['pf'])
+    weak   = [x for x in results if x['pf']<1.2]
 
     print("\n" + "="*W)
-    print("  SUMMARY — Partial Close at 1R")
+    print("  COMBINED PORTFOLIO SUMMARY")
     print("="*W)
-    print(f"  Trades: {s2['n']}  |  WR: {s2['wr']:.1f}%  |  PF: {s2['pf']:.2f}")
-    print(f"  Avg win: £{s2['avg_w']:,.0f}  |  Avg loss: £{s2['avg_l']:,.0f}  "
-          f"|  Ratio: {s2['avg_w']/s2['avg_l']:.2f}R" if s2['avg_l'] else "")
-    print(f"  Monthly: £{s2['mo']:,.0f}  |  2yr total: £{s2['total']:,.0f}")
+    print(f"\n  Total trades:    {s1['n']}")
+    print(f"  Win rate:        {s1['wr']:.1f}%")
+    print(f"  Profit factor:   {s1['pf']:.2f}")
+    print(f"  Avg win:         £{s1['avg_w']:,.0f}  |  Avg loss: £{s1['avg_l']:,.0f}"
+          f"  |  Ratio: {s1['avg_w']/s1['avg_l']:.2f}R")
+    print(f"  Monthly avg P&L: £{s1['mo']:,.0f}")
+    print(f"  2-year total:    £{s1['total']:,.0f}")
 
-    # ── Comparison ───────────────────────────────────────────────────────────
-    print("\n" + "="*W)
-    print("  PARTIAL CLOSE COMPARISON")
-    print("="*W)
-    print(f"\n  {'Metric':<20} {'No Partial':>12} {'Partial 1R':>12} {'Change':>10}")
-    print("  " + "─"*56)
-    print(f"  {'Profit Factor':<20} {s1['pf']:>12.2f} {s2['pf']:>12.2f} "
-          f"  {s2['pf']-s1['pf']:+.2f}")
-    print(f"  {'Win Rate':<20} {s1['wr']:>11.1f}% {s2['wr']:>11.1f}%")
-    print(f"  {'Avg Win (£)':<20} {s1['avg_w']:>12,.0f} {s2['avg_w']:>12,.0f} "
-          f"  {s2['avg_w']-s1['avg_w']:+,.0f}")
-    print(f"  {'Avg Loss (£)':<20} {s1['avg_l']:>12,.0f} {s2['avg_l']:>12,.0f} "
-          f"  {s2['avg_l']-s1['avg_l']:+,.0f}")
-    print(f"  {'Monthly P&L (£)':<20} {s1['mo']:>12,.0f} {s2['mo']:>12,.0f} "
-          f"  {s2['mo']-s1['mo']:+,.0f}")
-    print(f"  {'2yr Total (£)':<20} {s1['total']:>12,.0f} {s2['total']:>12,.0f} "
-          f"  {s2['total']-s1['total']:+,.0f}")
+    print(f"\n  ✅ STRONG (PF≥1.5):")
+    for x in strong:
+        print(f"     {x['name']:<18} PF {x['pf']:.2f}  £{x['mo']:,.0f}/mo")
+    if weak:
+        print(f"\n  ❌ WEAK (PF<1.2):")
+        for x in weak:
+            print(f"     {x['name']:<18} PF {x['pf']:.2f}  £{x['mo']:,.0f}/mo")
     print()

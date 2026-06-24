@@ -60,7 +60,7 @@
 //|  (FTMO daily limit = 5%. Buffer = 1.5%)                          |
 //+------------------------------------------------------------------+
 #property copyright "GC4C Signal Bot"
-#property version   "5.10"
+#property version   "5.00"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -89,7 +89,7 @@ input double  Risk_LB     = 0.4;
 input double  Risk_ORB    = 0.75;
 input double  Risk_NAS    = 0.75;
 input double  Risk_SP5    = 0.4;
-input double  Risk_NG     = 0.40;  // reduced — NatGas has high SL slippage
+input double  Risk_NG     = 0.40;  // reduced — NatGas SL slippage risk
 input double  Risk_PDH_EU = 0.5;
 input double  Risk_PDH    = 0.4;
 input double  Risk_PWH_EU = 0.4;
@@ -130,8 +130,8 @@ bool fvg_eur_fired;
 bool h4_dax_fired, h4_oil_fired, h4_uk100_fired;
 bool h4_gbpjpy_fired, h4_usdchf_fired;
 bool h4_eurusd_fired, h4_gbpusd_fired, h4_eurjpy_fired;
-//--- Donchian
-bool dch_dax_fired, dch_uk100_fired, dch_nas_fired, dch_gold_fired;
+//--- Donchian (UK100+Gold removed)
+bool dch_dax_fired, dch_nas_fired;
 //--- Gold LSR
 bool lsr_gold_fired;
 
@@ -175,22 +175,22 @@ void OnTimer()
    CheckNatGas();
    CheckNatGasH1();
 
-   // PDH (UK100/NG removed; DAX+SP5 use D1 bias filter)
+   // PDH (UK100+NG removed; DAX+SP5 use D1 bias filter)
    CheckPDH(Sym_DAX,    Risk_PDH_EU, 8,  17, pdh_dax_fired,    "PDH_DAX",    true);
    CheckPDH(Sym_GBPJPY, Risk_PDH,    7,  17, pdh_gbpjpy_fired, "PDH_GBPJPY");
    CheckPDH(Sym_NAS100, Risk_PDH,   14,  21, pdh_nas_fired,    "PDH_NAS");
    CheckPDH(Sym_SP500,  Risk_PDH,   14,  21, pdh_sp5_fired,    "PDH_SP5",    true);
    // PDH_NG removed — PF 1.00 after spread/slippage
 
-   // PWH (UK100/DAX/SP5 removed)
+   // PWH (UK100+DAX+SP5 removed)
    CheckPWH(Sym_NAS100, Risk_PWH_US, 14, 21, pwh_nas_fired,    "PWH_NAS");
-   // PWH_DAX removed — PF 1.11 | PWH_SP5 removed — PF 0.89
+   // PWH_DAX PF 1.11 | PWH_SP5 PF 0.89 — removed
 
    CheckAMD(Sym_EURUSD, Risk_AMD, "AMD_EUR", amd_eur_fired);
    CheckAMD(Sym_GBPUSD, Risk_AMD, "AMD_GBP", amd_gbp_fired);
    CheckAMDUS(Sym_NAS100, Risk_AMD, "AMD_NAS", amd_nas_fired);
 
-   // LSR (UK100 re-added with D1 bias — PF 2.02)
+   // LSR (UK100 re-added with D1 bias — backtest PF 2.02)
    CheckLSR(Sym_UK100,  Risk_LSR, 8,  17, lsr_uk100_fired, "LSR_UK100", true);
    CheckLSR(Sym_NAS100, Risk_LSR, 14, 21, lsr_nas_fired,   "LSR_NAS");
    CheckLSR(Sym_EURUSD, Risk_LSR, 7,  17, lsr_eur_fired,   "LSR_EUR");
@@ -206,10 +206,10 @@ void OnTimer()
    CheckH4(Sym_GBPUSD, Risk_H4, 7,  17, h4_gbpusd_fired, "H4_GBPUSD");
    CheckH4(Sym_EURJPY, Risk_H4, 7,  17, h4_eurjpy_fired, "H4_EURJPY");
 
-   CheckDonchian(Sym_DAX,    Risk_DCH,      8,  17, dch_dax_fired,   "DCH_DAX");
-   CheckDonchian(Sym_UK100,  Risk_DCH,      8,  17, dch_uk100_fired, "DCH_UK100");
-   CheckDonchian(Sym_NAS100, Risk_DCH_US,  14,  21, dch_nas_fired,   "DCH_NAS");
-   CheckDonchian(Sym_GOLD,   Risk_DCH_GOLD, 8,  20, dch_gold_fired,  "DCH_GOLD");
+   CheckDonchian(Sym_DAX,    Risk_DCH,     8,  17, dch_dax_fired, "DCH_DAX");
+   CheckDonchian(Sym_NAS100, Risk_DCH_US, 14,  21, dch_nas_fired, "DCH_NAS");
+   // DCH_UK100 removed — PF 1.21 (bull market SELL risk)
+   // DCH_GOLD removed  — PF 1.03 (breakeven)
 
    CheckLSR(Sym_GOLD, Risk_LSR_GOLD, 8, 20, lsr_gold_fired, "LSR_GOLD");
 }
@@ -253,7 +253,7 @@ void ResetDaily()
    h4_dax_fired = h4_oil_fired = h4_uk100_fired = false;
    h4_gbpjpy_fired = h4_usdchf_fired = false;
    h4_eurusd_fired = h4_gbpusd_fired = h4_eurjpy_fired = false;
-   dch_dax_fired = dch_uk100_fired = dch_nas_fired = dch_gold_fired = false;
+   dch_dax_fired = dch_nas_fired = false;
    lsr_gold_fired = false;
 
    last_reset        = today;
