@@ -119,7 +119,7 @@ input int     Magic = 20250619;
 bool lb_eur_fired, lb_gbp_fired, dax_orb_fired;
 bool nas_fired, sp5_fired, ng_fired, ng_h1_fired;
 //--- PDH
-bool pdh_dax_fired, pdh_uk100_fired, pdh_nas_fired;
+bool pdh_dax_fired, pdh_nas_fired;
 bool pdh_sp5_fired, pdh_ng_fired, pdh_gbpjpy_fired;
 //--- PWH
 bool pwh_dax_fired, pwh_uk100_fired, pwh_nas_fired, pwh_sp5_fired;
@@ -156,7 +156,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   Print("11botV3 started — 37 strategies | Circuit breaker: ",
+   Print("11botV3 started — 36 strategies | Circuit breaker: ",
          Max_Daily_Loss, "% daily loss limit");
    return INIT_SUCCEEDED;
 }
@@ -182,11 +182,10 @@ void OnTimer()
    CheckNatGasH1();
 
    // ── PDH / PDL Breakout ───────────────────────────────────────────
-   CheckPDH(Sym_DAX,    Risk_PDH_EU, 8,  17, pdh_dax_fired,    "PDH_DAX");
-   CheckPDH(Sym_UK100,  Risk_PDH_EU, 8,  17, pdh_uk100_fired,  "PDH_UK100");
+   CheckPDH(Sym_DAX,    Risk_PDH_EU, 8,  17, pdh_dax_fired,    "PDH_DAX",    true);
    CheckPDH(Sym_GBPJPY, Risk_PDH,    7,  17, pdh_gbpjpy_fired, "PDH_GBPJPY");
    CheckPDH(Sym_NAS100, Risk_PDH,   14,  21, pdh_nas_fired,    "PDH_NAS");
-   CheckPDH(Sym_SP500,  Risk_PDH,   14,  21, pdh_sp5_fired,    "PDH_SP5");
+   CheckPDH(Sym_SP500,  Risk_PDH,   14,  21, pdh_sp5_fired,    "PDH_SP5",    true);
    CheckPDH(Sym_NATGAS, Risk_PDH,   14,  21, pdh_ng_fired,     "PDH_NG");
 
    // ── Previous Week High/Low ───────────────────────────────────────
@@ -262,7 +261,7 @@ void ResetDaily()
    // Reset all fired flags
    lb_eur_fired = lb_gbp_fired = dax_orb_fired = false;
    nas_fired    = sp5_fired    = ng_fired = ng_h1_fired = false;
-   pdh_dax_fired = pdh_uk100_fired = pdh_nas_fired = false;
+   pdh_dax_fired = pdh_nas_fired = false;
    pdh_sp5_fired = pdh_ng_fired   = pdh_gbpjpy_fired = false;
    pwh_dax_fired = pwh_uk100_fired = pwh_nas_fired = pwh_sp5_fired = false;
    amd_eur_fired = amd_gbp_fired  = amd_nas_fired = false;
@@ -312,7 +311,12 @@ void DoBuy(string sym, double sl, double risk_pct, string tag)
 {
    SymbolSelect(sym, true);
    double ask  = SymbolInfoDouble(sym, SYMBOL_ASK);
-   double lots = CalcLots(sym, MathAbs(ask-sl), risk_pct);
+   double sl_d = MathAbs(ask - sl);
+   double min_stop = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL)
+                     * SymbolInfoDouble(sym, SYMBOL_POINT);
+   if(sl_d <= min_stop)
+      { Print("BUY SKIP ", sym, " — SL too close [", tag, "]"); return; }
+   double lots = CalcLots(sym, sl_d, risk_pct);
    if(trade.Buy(lots, sym, ask, sl, 0, tag))
       Print("BUY  ", sym, " @ ", ask, " SL=", sl, " [", tag, "]");
    else Print("BUY FAIL ", sym, " err=", GetLastError());
@@ -322,7 +326,12 @@ void DoSell(string sym, double sl, double risk_pct, string tag)
 {
    SymbolSelect(sym, true);
    double bid  = SymbolInfoDouble(sym, SYMBOL_BID);
-   double lots = CalcLots(sym, MathAbs(bid-sl), risk_pct);
+   double sl_d = MathAbs(bid - sl);
+   double min_stop = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL)
+                     * SymbolInfoDouble(sym, SYMBOL_POINT);
+   if(sl_d <= min_stop)
+      { Print("SELL SKIP ", sym, " — SL too close [", tag, "]"); return; }
+   double lots = CalcLots(sym, sl_d, risk_pct);
    if(trade.Sell(lots, sym, bid, sl, 0, tag))
       Print("SELL ", sym, " @ ", bid, " SL=", sl, " [", tag, "]");
    else Print("SELL FAIL ", sym, " err=", GetLastError());
@@ -562,10 +571,26 @@ void CheckNatGasH1()
 }
 
 //+------------------------------------------------------------------+
-//| 7-12. PDH/PDL BREAKOUT                                           |
+//| D1 20-SMA bias: +1 bullish, -1 bearish, 0 unknown               |
+//+------------------------------------------------------------------+
+int GetD1Bias(string sym)
+{
+   int h=iMA(sym,PERIOD_D1,20,0,MODE_SMA,PRICE_CLOSE);
+   if(h==INVALID_HANDLE) return 0;
+   double sma[1];
+   bool ok=CopyBuffer(h,0,1,1,sma)>=1;
+   IndicatorRelease(h);
+   if(!ok) return 0;
+   double cl=iClose(sym,PERIOD_D1,1);
+   if(cl<=0||sma[0]<=0) return 0;
+   return cl>sma[0] ? 1 : -1;
+}
+
+//+------------------------------------------------------------------+
+//| 7-11. PDH/PDL BREAKOUT                                           |
 //+------------------------------------------------------------------+
 void CheckPDH(string sym, double risk, int s_start, int s_end,
-              bool &fired, string tag)
+              bool &fired, string tag, bool use_bias=false)
 {
    int h=UTCHour();
    if(h<s_start||h>=s_end||fired||HasPosition(sym)) return;
@@ -577,8 +602,9 @@ void CheckPDH(string sym, double risk, int s_start, int s_end,
    double bid=SymbolInfoDouble(sym,SYMBOL_BID);
    double ask=SymbolInfoDouble(sym,SYMBOL_ASK);
    double buf=a*0.05;
-   if(ask>pdh+buf)    {DoBuy (sym,ask-1.5*a,risk,tag+"_B");fired=true;}
-   else if(bid<pdl-buf){DoSell(sym,bid+1.5*a,risk,tag+"_S");fired=true;}
+   int bias=use_bias ? GetD1Bias(sym) : 0;
+   if(ask>pdh+buf    && (!use_bias||bias==1)) {DoBuy (sym,ask-1.5*a,risk,tag+"_B");fired=true;}
+   else if(bid<pdl-buf && (!use_bias||bias==-1)){DoSell(sym,bid+1.5*a,risk,tag+"_S");fired=true;}
 }
 
 //+------------------------------------------------------------------+
