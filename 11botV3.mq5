@@ -109,7 +109,10 @@ input double  Trail_H4  = 0.3;
 input double  Trail_DCH = 0.4;
 
 //--- Safety
-input double  Max_Daily_Loss = 3.5;
+input double  Max_Daily_Loss      = 3.5;
+input double  Max_Concurrent_Risk = 3.0;  // max total open risk % before blocking new entries
+input bool    UseNewsFilter       = true;
+input int     News_Pause_Min      = 30;   // minutes to pause around high-impact events
 input int     Magic = 20250619;
 
 //--- Daily fired flags
@@ -119,7 +122,7 @@ bool nas_fired, sp5_fired, ng_fired, ng_h1_fired;
 bool pdh_dax_fired, pdh_nas_fired;
 bool pdh_sp5_fired, pdh_gbpjpy_fired;
 //--- PWH (UK100+DAX+SP5 removed)
-bool pwh_nas_fired;
+bool pwh_uk100_fired, pwh_nas_fired;
 //--- AMD
 bool amd_eur_fired, amd_gbp_fired, amd_nas_fired;
 //--- LSR (UK100 re-added with D1 bias)
@@ -134,6 +137,8 @@ bool h4_eurusd_fired, h4_gbpusd_fired, h4_eurjpy_fired;
 bool dch_dax_fired, dch_nas_fired;
 //--- Gold LSR
 bool lsr_gold_fired;
+//--- Overnight BE
+bool g_overnight_be_done;
 
 datetime last_reset = 0;
 
@@ -164,7 +169,9 @@ void OnTimer()
 {
    ResetDaily();
    ManageTrails();
+   CheckOvernightBE();
    if(DailyLossExceeded()) return;
+   if(IsNearHighImpactNews()) return;
 
    CheckLBEur();
    CheckLBGbp();
@@ -175,41 +182,39 @@ void OnTimer()
    CheckNatGas();
    CheckNatGasH1();
 
-   // PDH (UK100+NG removed; DAX+SP5 use D1 bias filter)
+   // PDH (UK100+NG removed; DAX+SP5 use D1 bias)
    CheckPDH(Sym_DAX,    Risk_PDH_EU, 8,  17, pdh_dax_fired,    "PDH_DAX",    true);
    CheckPDH(Sym_GBPJPY, Risk_PDH,    7,  17, pdh_gbpjpy_fired, "PDH_GBPJPY");
    CheckPDH(Sym_NAS100, Risk_PDH,   14,  21, pdh_nas_fired,    "PDH_NAS");
    CheckPDH(Sym_SP500,  Risk_PDH,   14,  21, pdh_sp5_fired,    "PDH_SP5",    true);
-   // PDH_NG removed — PF 1.00 after spread/slippage
 
-   // PWH (UK100+DAX+SP5 removed)
+   // PWH (UK100 re-added; DAX+SP5 removed PF<1.2)
+   CheckPWH(Sym_UK100,  Risk_PWH_EU, 8,  17, pwh_uk100_fired,  "PWH_UK100");
    CheckPWH(Sym_NAS100, Risk_PWH_US, 14, 21, pwh_nas_fired,    "PWH_NAS");
-   // PWH_DAX PF 1.11 | PWH_SP5 PF 0.89 — removed
 
    CheckAMD(Sym_EURUSD, Risk_AMD, "AMD_EUR", amd_eur_fired);
    CheckAMD(Sym_GBPUSD, Risk_AMD, "AMD_GBP", amd_gbp_fired);
    CheckAMDUS(Sym_NAS100, Risk_AMD, "AMD_NAS", amd_nas_fired);
 
-   // LSR (UK100 re-added with D1 bias — backtest PF 2.02)
+   // LSR (UK100 re-added with D1 bias — PF 2.02)
    CheckLSR(Sym_UK100,  Risk_LSR, 8,  17, lsr_uk100_fired, "LSR_UK100", true);
    CheckLSR(Sym_NAS100, Risk_LSR, 14, 21, lsr_nas_fired,   "LSR_NAS");
    CheckLSR(Sym_EURUSD, Risk_LSR, 7,  17, lsr_eur_fired,   "LSR_EUR");
 
    CheckFVG(Sym_EURUSD, Risk_FVG, 7, 17, fvg_eur_fired, "FVG_EUR");
 
+   // H4 EMA (EURCHF removed PF 1.00; UK100 re-added with D1 bias PF 1.91)
    CheckH4(Sym_DAX,    Risk_H4, 8,  16, h4_dax_fired,    "H4_DAX");
-   CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100",  true); // D1 bias
-   // H4_EURCHF removed — PF 0.99 after spread/slippage
+   CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100",  true);
    CheckH4(Sym_GBPJPY, Risk_H4, 0,  21, h4_gbpjpy_fired, "H4_GBPJPY");
    CheckH4(Sym_USDCHF, Risk_H4, 8,  17, h4_usdchf_fired, "H4_USDCHF");
    CheckH4(Sym_EURUSD, Risk_H4, 7,  17, h4_eurusd_fired, "H4_EURUSD");
    CheckH4(Sym_GBPUSD, Risk_H4, 7,  17, h4_gbpusd_fired, "H4_GBPUSD");
    CheckH4(Sym_EURJPY, Risk_H4, 7,  17, h4_eurjpy_fired, "H4_EURJPY");
 
-   CheckDonchian(Sym_DAX,    Risk_DCH,     8,  17, dch_dax_fired, "DCH_DAX");
-   CheckDonchian(Sym_NAS100, Risk_DCH_US, 14,  21, dch_nas_fired, "DCH_NAS");
-   // DCH_UK100 removed — PF 1.21 (bull market SELL risk)
-   // DCH_GOLD removed  — PF 1.03 (breakeven)
+   // Donchian (UK100+Gold removed PF<1.1)
+   CheckDonchian(Sym_DAX,    Risk_DCH,    8,  17, dch_dax_fired, "DCH_DAX");
+   CheckDonchian(Sym_NAS100, Risk_DCH_US, 14, 21, dch_nas_fired, "DCH_NAS");
 
    CheckLSR(Sym_GOLD, Risk_LSR_GOLD, 8, 20, lsr_gold_fired, "LSR_GOLD");
 }
@@ -246,7 +251,7 @@ void ResetDaily()
    nas_fired    = sp5_fired    = ng_fired = ng_h1_fired = false;
    pdh_dax_fired = pdh_nas_fired = false;
    pdh_sp5_fired = pdh_gbpjpy_fired = false;
-   pwh_nas_fired = false;
+   pwh_uk100_fired = pwh_nas_fired = false;
    amd_eur_fired = amd_gbp_fired = amd_nas_fired = false;
    lsr_uk100_fired = lsr_nas_fired = lsr_eur_fired = false;
    fvg_eur_fired = false;
@@ -255,6 +260,7 @@ void ResetDaily()
    h4_eurusd_fired = h4_gbpusd_fired = h4_eurjpy_fired = false;
    dch_dax_fired = dch_nas_fired = false;
    lsr_gold_fired = false;
+   g_overnight_be_done = false;
 
    last_reset        = today;
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -290,8 +296,69 @@ double CalcLots(string sym, double sl_pts, double risk_pct)
           MathMin(SymbolInfoDouble(sym,SYMBOL_VOLUME_MAX), lots));
 }
 
+double TotalOpenRisk()
+{
+   double total = 0;
+   double bal   = AccountInfoDouble(ACCOUNT_BALANCE);
+   if(bal <= 0) return 0;
+   for(int i = PositionsTotal()-1; i >= 0; i--)
+   {
+      if(!pos.SelectByIndex(i) || pos.Magic() != Magic) continue;
+      double sld = MathAbs(pos.PriceOpen() - pos.StopLoss());
+      if(sld <= 0) continue;
+      string sym = pos.Symbol();
+      double tv  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+      double ts  = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+      if(tv <= 0 || ts <= 0) continue;
+      total += (sld/ts) * tv * pos.Volume();
+   }
+   return total / bal * 100.0;
+}
+
+bool IsNearHighImpactNews()
+{
+   if(!UseNewsFilter) return false;
+   MqlCalendarValue values[];
+   datetime now = TimeGMT();
+   if(CalendarValueHistory(values, now-News_Pause_Min*60, now+News_Pause_Min*60, NULL, NULL) <= 0)
+      return false;
+   for(int i = 0; i < ArraySize(values); i++)
+   {
+      MqlCalendarEvent ev;
+      if(!CalendarEventById(values[i].event_id, ev)) continue;
+      if(ev.importance == CALENDAR_IMPORTANCE_HIGH)
+      {
+         static datetime last_warn = 0;
+         if(TimeGMT() - last_warn > 300)
+            { Print("⚠️ News filter: high-impact event within ", News_Pause_Min, " mins"); last_warn=TimeGMT(); }
+         return true;
+      }
+   }
+   return false;
+}
+
+void CheckOvernightBE()
+{
+   if(UTCHour() != 21 || g_overnight_be_done) return;
+   g_overnight_be_done = true;
+   for(int i = PositionsTotal()-1; i >= 0; i--)
+   {
+      if(!pos.SelectByIndex(i) || pos.Magic() != Magic) continue;
+      string sym   = pos.Symbol();
+      double entry = pos.PriceOpen();
+      double sl    = pos.StopLoss();
+      double pt    = SymbolInfoDouble(sym, SYMBOL_POINT);
+      if(pos.PositionType() == POSITION_TYPE_BUY && sl < entry - pt)
+         { trade.PositionModify(sym, entry, 0); Print("⏰ Overnight BE: BUY  ", sym); }
+      else if(pos.PositionType() == POSITION_TYPE_SELL && sl > entry + pt)
+         { trade.PositionModify(sym, entry, 0); Print("⏰ Overnight BE: SELL ", sym); }
+   }
+}
+
 void DoBuy(string sym, double sl, double risk_pct, string tag)
 {
+   if(TotalOpenRisk() + risk_pct > Max_Concurrent_Risk)
+      { Print("BUY SKIP ", sym, " — concurrent risk cap [", tag, "]"); return; }
    SymbolSelect(sym, true);
    double ask  = SymbolInfoDouble(sym, SYMBOL_ASK);
    double sl_d = MathAbs(ask - sl);
@@ -307,6 +374,8 @@ void DoBuy(string sym, double sl, double risk_pct, string tag)
 
 void DoSell(string sym, double sl, double risk_pct, string tag)
 {
+   if(TotalOpenRisk() + risk_pct > Max_Concurrent_Risk)
+      { Print("SELL SKIP ", sym, " — concurrent risk cap [", tag, "]"); return; }
    SymbolSelect(sym, true);
    double bid  = SymbolInfoDouble(sym, SYMBOL_BID);
    double sl_d = MathAbs(bid - sl);

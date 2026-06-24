@@ -31,9 +31,17 @@ ACCOUNT   = 70_000
 TRAIL_ORB = 0.20
 TRAIL_H4  = 0.30
 TRAIL_DCH = 0.40
+PARTIAL_R = None
 
-# Partial close config — set to None to disable, or float e.g. 1.0 = close 50% at 1R profit
-PARTIAL_R = None   # toggled at runtime — see main block
+# Walk-forward date filter — set both to None for full 2-year run
+BT_FROM = None   # e.g. pd.Timestamp('2024-06-01', tz='UTC')
+BT_TO   = None
+
+def date_in_range(d):
+    t = pd.Timestamp(d, tz='UTC')
+    if BT_FROM and t < BT_FROM: return False
+    if BT_TO   and t > BT_TO:   return False
+    return True
 
 RISKS = {
     'LB_EUR': 0.004,  'LB_GBP': 0.004,
@@ -215,7 +223,7 @@ def run_lb(key, tag, skip_dow=set(), pip=0.0001):
     df = load_h1(key)
     if df is None: return []
     trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
-    dates  = sorted(set(df.index.normalize().date))
+    dates  = sorted(d for d in set(df.index.normalize().date) if date_in_range(d))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
         if day.dayofweek in skip_dow: continue
@@ -243,7 +251,7 @@ def run_orb(key, tag, ref_h, es, ee, rmin, rmax, skip_dow=set()):
     df = load_h1(key)
     if df is None: return []
     trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
-    dates  = sorted(set(df.index.normalize().date))
+    dates  = sorted(d for d in set(df.index.normalize().date) if date_in_range(d))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
         if day.dayofweek in skip_dow: continue
@@ -271,7 +279,7 @@ def run_ng_h1(tag):
     atr   = calc_atr(df, 14)
     adx   = calc_adx(df, 14)
     trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
-    dates  = sorted(set(df.index.normalize().date))
+    dates  = sorted(d for d in set(df.index.normalize().date) if date_in_range(d))
     fired_days = set()
     for i in range(21, len(df)-50):
         ts = df.index[i]
@@ -476,7 +484,7 @@ def run_donchian(key, tag, hs, he):
     adx4 = calc_adx(df4, 14); atr1 = calc_atr(df1, 14)
     trades = []; risk = RISKS.get(tag, 0.005); cost = COST_R.get(tag, 0.06)
     fired_days = set()
-    dates = sorted(set(df1.index.normalize().date))
+    dates = sorted(d for d in set(df1.index.normalize().date) if date_in_range(d))
     for date in dates:
         if date in fired_days: continue
         day = pd.Timestamp(date, tz='UTC')
@@ -625,8 +633,8 @@ def run_portfolio(print_table=True):
 if __name__ == '__main__':
     W = 65
 
-    # ── Run clean v5.10 system ───────────────────────────────────────────────
-    PARTIAL_R = None
+    # ── Full 2-year run ──────────────────────────────────────────────────────
+    PARTIAL_R = None; BT_FROM = None; BT_TO = None
     print("\n" + "="*W)
     print("  11botV3 v5.10 — Live Strategy Set (2-Year Backtest)")
     print("="*W)
@@ -653,4 +661,30 @@ if __name__ == '__main__':
         print(f"\n  ❌ WEAK (PF<1.2):")
         for x in weak:
             print(f"     {x['name']:<18} PF {x['pf']:.2f}  £{x['mo']:,.0f}/mo")
+
+    # ── Walk-forward split ───────────────────────────────────────────────────
+    mid = pd.Timestamp('2025-01-01', tz='UTC')
+
+    global BT_FROM, BT_TO
+    BT_FROM = None; BT_TO = mid
+    sy1 = run_portfolio(print_table=False)
+
+    BT_FROM = mid; BT_TO = None
+    sy2 = run_portfolio(print_table=False)
+
+    BT_FROM = None; BT_TO = None   # reset
+
+    print("\n" + "="*W)
+    print("  WALK-FORWARD VALIDATION")
+    print("="*W)
+    print(f"\n  {'Metric':<22} {'Year 1 (in-sample)':>20} {'Year 2 (out-of-sample)':>22}")
+    print("  " + "─"*66)
+    print(f"  {'Trades':<22} {sy1['n']:>20,} {sy2['n']:>22,}")
+    print(f"  {'Win Rate':<22} {sy1['wr']:>19.1f}% {sy2['wr']:>21.1f}%")
+    print(f"  {'Profit Factor':<22} {sy1['pf']:>20.2f} {sy2['pf']:>22.2f}")
+    print(f"  {'Avg Win (£)':<22} {sy1['avg_w']:>20,.0f} {sy2['avg_w']:>22,.0f}")
+    print(f"  {'Avg Loss (£)':<22} {sy1['avg_l']:>20,.0f} {sy2['avg_l']:>22,.0f}")
+    print(f"  {'Monthly P&L (£)':<22} {sy1['mo']:>20,.0f} {sy2['mo']:>22,.0f}")
+    verdict = "✅ EDGE HOLDS" if sy2['pf'] >= sy1['pf']*0.8 else "⚠️  DEGRADED — possible overfitting"
+    print(f"\n  Year 2 PF is {sy2['pf']/sy1['pf']*100:.0f}% of Year 1 PF  →  {verdict}")
     print()
