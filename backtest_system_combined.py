@@ -30,6 +30,7 @@ warnings.filterwarnings('ignore')
 ACCOUNT   = 70_000
 TRAIL_ORB = 0.20
 TRAIL_H4  = 0.30
+TRAIL_DCH = 0.40
 
 RISKS = {
     'LB_EUR': 0.004,  'LB_GBP': 0.004,
@@ -44,6 +45,9 @@ RISKS = {
     'FVG_EUR': 0.003,
     'H4_DAX': 0.0075,  'H4_UK100': 0.0075,
     'H4_EURCHF': 0.0075, 'H4_GBPJPY': 0.0075, 'H4_USDCHF': 0.0075,
+    'H4_EURUSD': 0.0075, 'H4_GBPUSD': 0.0075, 'H4_EURJPY': 0.0075,
+    'DCH_DAX': 0.005, 'DCH_UK100': 0.005, 'DCH_NAS': 0.0075, 'DCH_GOLD': 0.004,
+    'LSR_GOLD': 0.003,
 }
 
 # Spread + slippage per trade in R units
@@ -61,6 +65,9 @@ COST_R = {
     'FVG_EUR': 0.06,
     'H4_DAX': 0.04,   'H4_UK100': 0.04,
     'H4_EURCHF': 0.05,'H4_GBPJPY': 0.04, 'H4_USDCHF': 0.05,
+    'H4_EURUSD': 0.04,'H4_GBPUSD': 0.04, 'H4_EURJPY': 0.04,
+    'DCH_DAX': 0.05,  'DCH_UK100': 0.05, 'DCH_NAS': 0.05, 'DCH_GOLD': 0.05,
+    'LSR_GOLD': 0.05,
 }
 
 YFSYMS = {
@@ -69,6 +76,7 @@ YFSYMS = {
     'SP500':  'ES=F',     'NATGAS': 'NG=F',
     'UK100':  '^FTSE',    'GBPJPY': 'GBPJPY=X',
     'EURCHF': 'EURCHF=X', 'USDCHF': 'USDCHF=X',
+    'EURJPY': 'EURJPY=X', 'GOLD':   'GC=F',
 }
 
 # ── Data ─────────────────────────────────────────────────────────────────────
@@ -429,6 +437,57 @@ def run_fvg(key, tag, hs, he):
                         fired=True; break
     return trades
 
+# ── Daily data loader ────────────────────────────────────────────────────────
+def load_d1(key):
+    ck = key + '_d1'
+    if ck not in _cache:
+        sym = YFSYMS.get(key)
+        if not sym: _cache[ck] = None; return None
+        try:
+            df = yf.download(sym, interval='1d', period='730d',
+                             auto_adjust=True, progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df.columns = [c.lower() for c in df.columns]
+            df = df.dropna()
+            if df.index.tz is None: df.index = df.index.tz_localize('UTC')
+            else:                   df.index = df.index.tz_convert('UTC')
+            _cache[ck] = df if len(df) > 50 else None
+        except:
+            _cache[ck] = None
+    return _cache[ck]
+
+# ── Donchian 20-day breakout ──────────────────────────────────────────────────
+def run_donchian(key, tag, hs, he):
+    df1 = load_h1(key); df4 = load_h4(key); dfd = load_d1(key)
+    if df1 is None or df4 is None or dfd is None: return []
+    adx4 = calc_adx(df4, 14); atr1 = calc_atr(df1, 14)
+    trades = []; risk = RISKS.get(tag, 0.005); cost = COST_R.get(tag, 0.06)
+    fired_days = set()
+    dates = sorted(set(df1.index.normalize().date))
+    for date in dates:
+        if date in fired_days: continue
+        day = pd.Timestamp(date, tz='UTC')
+        d_slice = dfd[dfd.index < day].tail(20)
+        if len(d_slice) < 20: continue
+        d20hi = d_slice['high'].max(); d20lo = d_slice['low'].min()
+        h4_at = adx4[adx4.index <= day + pd.Timedelta(hours=hs)]
+        if len(h4_at) == 0 or h4_at.iloc[-1] < 25: continue
+        edf = df1[(df1.index >= day+pd.Timedelta(hours=hs)) &
+                  (df1.index <  day+pd.Timedelta(hours=he))]
+        for j in range(len(edf)):
+            b = edf.iloc[j]; p = ipos(df1, edf.index[j])
+            if p < 0: continue
+            av = atr1.iloc[min(p, len(atr1)-1)]
+            if av <= 0: continue
+            if b['high'] > d20hi:
+                trades.append(make_trade(df1,p,1, b['close'],b['close']-2.0*av,TRAIL_DCH,risk,cost))
+                fired_days.add(date); break
+            elif b['low'] < d20lo:
+                trades.append(make_trade(df1,p,-1,b['close'],b['close']+2.0*av,TRAIL_DCH,risk,cost))
+                fired_days.add(date); break
+    return trades
+
 # ── 25-29. H4 EMA trend ───────────────────────────────────────────────────────
 def run_h4(key, tag, hs, he):
     df4 = load_h4(key); df1 = load_h1(key)
@@ -524,6 +583,18 @@ if __name__ == '__main__':
     r('H4_EURCHF', run_h4('EURCHF','H4_EURCHF', 8, 17))
     r('H4_GBPJPY', run_h4('GBPJPY','H4_GBPJPY', 0, 21))
     r('H4_USDCHF', run_h4('USDCHF','H4_USDCHF', 8, 17))
+    r('H4_EURUSD', run_h4('EURUSD','H4_EURUSD', 7, 17))
+    r('H4_GBPUSD', run_h4('GBPUSD','H4_GBPUSD', 7, 17))
+    r('H4_EURJPY', run_h4('EURJPY','H4_EURJPY', 7, 17))
+
+    print("\n── Donchian 20-Day Breakout ─────────────────────────────────────")
+    r('DCH_DAX',   run_donchian('DAX',   'DCH_DAX',    8, 17))
+    r('DCH_UK100', run_donchian('UK100', 'DCH_UK100',  8, 17))
+    r('DCH_NAS',   run_donchian('NAS100','DCH_NAS',   14, 21))
+    r('DCH_GOLD',  run_donchian('GOLD',  'DCH_GOLD',   8, 20))
+
+    print("\n── Gold LSR ─────────────────────────────────────────────────────")
+    r('LSR_GOLD',  run_lsr('GOLD', 'LSR_GOLD', 8, 20))
 
     # ── Combined portfolio ───────────────────────────────────────────────────
     all_pnls = []
