@@ -145,7 +145,7 @@ double   g_day_open_equity = 0;
 datetime g_day_start       = 0;
 
 //--- Trail tracker
-struct TrailData { ulong ticket; double best; };
+struct TrailData { ulong ticket; double best; double orig_sld; };
 TrailData g_trails[300];
 int       g_trail_n = 0;
 
@@ -156,7 +156,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   Print("11botV3 started — 36 strategies | Circuit breaker: ",
+   Print("11botV3 started — 37 strategies | Circuit breaker: ",
          Max_Daily_Loss, "% daily loss limit");
    return INIT_SUCCEEDED;
 }
@@ -276,7 +276,7 @@ void ResetDaily()
 
    last_reset         = today;
    g_day_open_equity  = AccountInfoDouble(ACCOUNT_EQUITY);
-   g_trail_n          = 0;
+   CleanTrails();
    Print("Daily reset — equity open: £", DoubleToString(g_day_open_equity,0));
 }
 
@@ -312,12 +312,7 @@ void DoBuy(string sym, double sl, double risk_pct, string tag)
 {
    SymbolSelect(sym, true);
    double ask  = SymbolInfoDouble(sym, SYMBOL_ASK);
-   double sl_d = MathAbs(ask - sl);
-   double min_stop = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL)
-                     * SymbolInfoDouble(sym, SYMBOL_POINT);
-   if(sl_d <= min_stop)
-      { Print("BUY SKIP ", sym, " — SL too close (", sl_d, " <= min ", min_stop, ") [", tag, "]"); return; }
-   double lots = CalcLots(sym, sl_d, risk_pct);
+   double lots = CalcLots(sym, MathAbs(ask-sl), risk_pct);
    if(trade.Buy(lots, sym, ask, sl, 0, tag))
       Print("BUY  ", sym, " @ ", ask, " SL=", sl, " [", tag, "]");
    else Print("BUY FAIL ", sym, " err=", GetLastError());
@@ -327,12 +322,7 @@ void DoSell(string sym, double sl, double risk_pct, string tag)
 {
    SymbolSelect(sym, true);
    double bid  = SymbolInfoDouble(sym, SYMBOL_BID);
-   double sl_d = MathAbs(bid - sl);
-   double min_stop = SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL)
-                     * SymbolInfoDouble(sym, SYMBOL_POINT);
-   if(sl_d <= min_stop)
-      { Print("SELL SKIP ", sym, " — SL too close (", sl_d, " <= min ", min_stop, ") [", tag, "]"); return; }
-   double lots = CalcLots(sym, sl_d, risk_pct);
+   double lots = CalcLots(sym, MathAbs(bid-sl), risk_pct);
    if(trade.Sell(lots, sym, bid, sl, 0, tag))
       Print("SELL ", sym, " @ ", bid, " SL=", sl, " [", tag, "]");
    else Print("SELL FAIL ", sym, " err=", GetLastError());
@@ -361,18 +351,46 @@ double TrailMult(string comment)
    return Trail_ORB;
 }
 
-void SetBest(ulong t, double p)
+void SetBest(ulong t, double p, double osld=0)
 {
    for(int i=0;i<g_trail_n;i++)
-      if(g_trails[i].ticket==t){g_trails[i].best=p;return;}
-   if(g_trail_n<300){g_trails[g_trail_n].ticket=t;
-                     g_trails[g_trail_n].best=p;g_trail_n++;}
+      if(g_trails[i].ticket==t)
+      {
+         g_trails[i].best=p;
+         if(osld>0 && g_trails[i].orig_sld<=0) g_trails[i].orig_sld=osld;
+         return;
+      }
+   if(g_trail_n<300)
+   {
+      g_trails[g_trail_n].ticket=t;
+      g_trails[g_trail_n].best=p;
+      g_trails[g_trail_n].orig_sld=osld;
+      g_trail_n++;
+   }
 }
 double GetBest(ulong t, double def)
 {
    for(int i=0;i<g_trail_n;i++)
       if(g_trails[i].ticket==t) return g_trails[i].best;
    return def;
+}
+double GetOrigSld(ulong t)
+{
+   for(int i=0;i<g_trail_n;i++)
+      if(g_trails[i].ticket==t) return g_trails[i].orig_sld;
+   return 0;
+}
+void CleanTrails()
+{
+   int w=0;
+   for(int i=0;i<g_trail_n;i++)
+   {
+      bool alive=false;
+      for(int j=PositionsTotal()-1;j>=0;j--)
+         if(pos.SelectByIndex(j)&&pos.Ticket()==g_trails[i].ticket){alive=true;break;}
+      if(alive) g_trails[w++]=g_trails[i];
+   }
+   g_trail_n=w;
 }
 
 void ManageTrails()
@@ -382,16 +400,25 @@ void ManageTrails()
       if(!pos.SelectByIndex(i)||pos.Magic()!=Magic) continue;
       string sym=pos.Symbol(); double entry=pos.PriceOpen();
       double sl_cur=pos.StopLoss(); double sld=MathAbs(entry-sl_cur);
-      if(sld<=0) continue;
-      double trail=sld*TrailMult(pos.Comment());
-      double pt=SymbolInfoDouble(sym,SYMBOL_POINT);
       ulong ticket=pos.Ticket();
+
+      // Use stored orig_sld when SL is at BE (sld=0), ATR fallback for old trades
+      double eff_sld=sld>0 ? sld : GetOrigSld(ticket);
+      if(eff_sld<=0)
+      {
+         ENUM_TIMEFRAMES tf=StringFind(pos.Comment(),"H4_")>=0 ? PERIOD_H4 : PERIOD_H1;
+         eff_sld=GetATR(sym,tf,14)*1.5;
+      }
+      if(eff_sld<=0) continue;
+
+      double trail=eff_sld*TrailMult(pos.Comment());
+      double pt=SymbolInfoDouble(sym,SYMBOL_POINT);
       if(pos.PositionType()==POSITION_TYPE_BUY)
       {
          double bid=SymbolInfoDouble(sym,SYMBOL_BID);
          double best=GetBest(ticket,entry);
-         if(bid>best){best=bid;SetBest(ticket,best);}
-         if(best>=entry+sld&&sl_cur<entry-pt) trade.PositionModify(sym,entry,0);
+         if(bid>best){best=bid;SetBest(ticket,best,sld);}
+         if(best>=entry+eff_sld&&sl_cur<entry-pt) trade.PositionModify(sym,entry,0);
          double ns=best-trail;
          if(ns>sl_cur+pt&&ns>entry) trade.PositionModify(sym,ns,0);
       }
@@ -399,8 +426,8 @@ void ManageTrails()
       {
          double ask=SymbolInfoDouble(sym,SYMBOL_ASK);
          double best=GetBest(ticket,entry);
-         if(ask<best){best=ask;SetBest(ticket,best);}
-         if(best<=entry-sld&&sl_cur>entry+pt) trade.PositionModify(sym,entry,0);
+         if(ask<best){best=ask;SetBest(ticket,best,sld);}
+         if(best<=entry-eff_sld&&sl_cur>entry+pt) trade.PositionModify(sym,entry,0);
          double ns=best+trail;
          if(ns<sl_cur-pt&&ns<entry) trade.PositionModify(sym,ns,0);
       }
