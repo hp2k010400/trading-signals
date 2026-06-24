@@ -11,58 +11,56 @@
 //|  6.  NatGas H1 EMA    XNGUSD           14:00-21:00 (fallback)   |
 //|                                                                   |
 //| ── PDH/PDL BREAKOUT (Trail 0.2R) ───────────────────────────── ─|
-//|  7.  PDH DAX          GER40            08:00-17:00               |
-//|  8.  PDH UK100        UK100.cash       08:00-17:00               |
-//|  9.  PDH NAS100       US100.cash       14:00-21:00               |
-//| 10.  PDH SP500        US500.cash       14:00-21:00               |
-//| 11.  PDH NatGas       XNGUSD           14:00-21:00               |
-//| 12.  PDH GBPJPY       GBPJPY           07:00-17:00               |
+//|  7.  PDH DAX          GER40            08:00-17:00  +D1 bias     |
+//|  8.  PDH NAS100       US100.cash       14:00-21:00               |
+//|  9.  PDH SP500        US500.cash       14:00-21:00  +D1 bias     |
+//| 10.  PDH NatGas       XNGUSD           14:00-21:00               |
+//| 11.  PDH GBPJPY       GBPJPY           07:00-17:00               |
 //|                                                                   |
 //| ── PREV WEEK HIGH/LOW (Trail 0.2R) ─────────────────────────── ─|
-//| 13.  PWH DAX          GER40            08:00-17:00  PF 8.95      |
-//| 14.  PWH UK100        UK100.cash       08:00-17:00  PF 7.70      |
-//| 15.  PWH NAS100       US100.cash       14:00-21:00  PF 10.70     |
-//| 16.  PWH SP500        US500.cash       14:00-21:00  PF 7.40      |
+//| 12.  PWH DAX          GER40            08:00-17:00               |
+//| 13.  PWH NAS100       US100.cash       14:00-21:00               |
+//| 14.  PWH SP500        US500.cash       14:00-21:00               |
 //|                                                                   |
 //| ── AMD MANIPULATION REVERSAL (Trail 0.2R) ─────────────────── ─ |
-//| 17.  AMD EURUSD       EURUSD           07:00-09:00  PF 1.50      |
-//| 18.  AMD GBPUSD       GBPUSD           07:00-09:00  PF 1.56      |
-//| 19.  AMD NAS100       US100.cash       14:00-16:00  PF 1.76      |
+//| 15.  AMD EURUSD       EURUSD           07:00-09:00               |
+//| 16.  AMD GBPUSD       GBPUSD           07:00-09:00               |
+//| 17.  AMD NAS100       US100.cash       14:00-16:00               |
 //|                                                                   |
 //| ── LIQUIDITY SWEEP REVERSAL (Trail 0.2R) ──────────────────── ─ |
-//| 20.  LSR UK100        UK100.cash       08:00-17:00  PF 1.82      |
-//| 21.  LSR NAS100       US100.cash       14:00-21:00  PF 1.64      |
-//| 22.  LSR EURUSD       EURUSD           07:00-17:00  PF 1.73      |
+//| 18.  LSR NAS100       US100.cash       14:00-21:00               |
+//| 19.  LSR EURUSD       EURUSD           07:00-17:00               |
 //|                                                                   |
 //| ── FAIR VALUE GAP (Trail 0.2R) ───────────────────────────────── |
-//| 23.  FVG EURUSD       EURUSD           07:00-17:00  PF 1.60      |
+//| 20.  FVG EURUSD       EURUSD           07:00-17:00               |
 //|                                                                   |
 //| ── H4 EMA TREND (Trail 0.3R) ───────────────────────────────── ─|
-//| 24.  DAX H4 EMA       GER40            08:00-16:00               |
-//| 25.  Oil H4 EMA       USOIL.cash       14:00-21:00  (disabled)   |
-//| 26.  UK100 H4 EMA     UK100.cash       08:00-16:00               |
-//| 27.  EURCHF H4 EMA    EURCHF           08:00-17:00               |
-//| 28.  GBPJPY H4 EMA    GBPJPY           00:00-21:00               |
-//| 29.  USDCHF H4 EMA    USDCHF           08:00-17:00               |
-//| 30.  EURUSD H4 EMA    EURUSD           07:00-17:00  PF 2.04      |
-//| 31.  GBPUSD H4 EMA    GBPUSD           07:00-17:00  PF 1.64      |
-//| 32.  EURJPY H4 EMA    EURJPY           07:00-17:00  PF 1.88      |
+//| 21.  DAX H4 EMA       GER40            08:00-16:00               |
+//| 22.  UK100 H4 EMA     UK100.cash       08:00-16:00               |
+//| 23.  EURCHF H4 EMA    EURCHF           08:00-17:00               |
+//| 24.  GBPJPY H4 EMA    GBPJPY           00:00-21:00               |
+//| 25.  USDCHF H4 EMA    USDCHF           08:00-17:00               |
+//| 26.  EURUSD H4 EMA    EURUSD           07:00-17:00               |
+//| 27.  GBPUSD H4 EMA    GBPUSD           07:00-17:00               |
+//| 28.  EURJPY H4 EMA    EURJPY           07:00-17:00               |
 //|                                                                   |
 //| ── DONCHIAN 20-DAY BREAKOUT (Trail 0.4R) ─────────────────────── |
-//| 33.  Donchian DAX     GER40            08:00-17:00  PF 2.51      |
-//| 34.  Donchian UK100   UK100.cash       08:00-17:00  PF 1.58      |
-//| 35.  Donchian NAS100  US100.cash       14:00-21:00  PF 1.89      |
-//| 36.  Donchian Gold    XAUUSD           08:00-20:00  PF 2.04      |
+//| 29.  Donchian DAX     GER40            08:00-17:00               |
+//| 30.  Donchian UK100   UK100.cash       08:00-17:00               |
+//| 31.  Donchian NAS100  US100.cash       14:00-21:00               |
+//| 32.  Donchian Gold    XAUUSD           08:00-20:00               |
 //|                                                                   |
 //| ── GOLD LSR (Trail 0.2R) ─────────────────────────────────────── |
-//| 37.  Gold LSR         XAUUSD           08:00-20:00  PF 1.69      |
+//| 33.  Gold LSR         XAUUSD           08:00-20:00               |
+//|                                                                   |
+//| ── UK100 REMOVED (PWH+LSR+PDH) — bull market SELL losses        |
 //|                                                                   |
 //| ── SAFETY ─────────────────────────────────────────────────────  |
 //|  Daily loss circuit breaker: stops NEW entries at 3.5% day loss  |
 //|  (FTMO daily limit = 5%. Buffer = 1.5%)                          |
 //+------------------------------------------------------------------+
 #property copyright "GC4C Signal Bot"
-#property version   "5.00"
+#property version   "5.10"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -72,75 +70,73 @@ CTrade        trade;
 CPositionInfo pos;
 
 //--- Symbol inputs
-input string  Sym_EURUSD = "EURUSD";       // confirmed
-input string  Sym_GBPUSD = "GBPUSD";       // confirmed
-input string  Sym_DAX    = "GER40.cash";   // confirmed
-input string  Sym_NAS100 = "US100.cash";   // confirmed
-input string  Sym_SP500  = "US500.cash";   // confirmed
-input string  Sym_OIL    = "";             // not available — Oil H4 EMA disabled
-input string  Sym_NATGAS = "NATGAS.cash";  // confirmed
-input string  Sym_UK100  = "UK100.cash";   // confirmed
-input string  Sym_EURCHF = "EURCHF";       // likely correct — confirm in Market Watch
-input string  Sym_GBPJPY = "GBPJPY";       // likely correct — confirm in Market Watch
-input string  Sym_USDCHF = "USDCHF";       // confirmed
-input string  Sym_EURJPY = "EURJPY";       // H4 EMA — confirm in Market Watch
-input string  Sym_GOLD   = "XAUUSD";       // confirmed in Market Watch
+input string  Sym_EURUSD = "EURUSD";
+input string  Sym_GBPUSD = "GBPUSD";
+input string  Sym_DAX    = "GER40.cash";
+input string  Sym_NAS100 = "US100.cash";
+input string  Sym_SP500  = "US500.cash";
+input string  Sym_OIL    = "";
+input string  Sym_NATGAS = "NATGAS.cash";
+input string  Sym_UK100  = "UK100.cash";
+input string  Sym_EURCHF = "EURCHF";
+input string  Sym_GBPJPY = "GBPJPY";
+input string  Sym_USDCHF = "USDCHF";
+input string  Sym_EURJPY = "EURJPY";
+input string  Sym_GOLD   = "XAUUSD";
 
 //--- Risk per trade (% of account balance)
-input double  Risk_LB     = 0.4;    // London Breakout
-input double  Risk_ORB    = 0.75;   // DAX ORB
-input double  Risk_NAS    = 0.75;   // NAS100 Open
-input double  Risk_SP5    = 0.4;    // SP500 Open
-input double  Risk_NG     = 0.75;   // NatGas Open / H1 EMA
-input double  Risk_PDH_EU = 0.5;    // PDH DAX + UK100
-input double  Risk_PDH    = 0.4;    // PDH NAS100/SP500/NatGas/GBPJPY
-input double  Risk_PWH_EU = 0.4;    // PWH DAX + UK100 (high confidence)
-input double  Risk_PWH_US = 0.3;    // PWH NAS100 + SP500 (lower sample)
-input double  Risk_AMD    = 0.4;    // AMD manipulation reversal
-input double  Risk_LSR    = 0.3;    // Liquidity sweep reversal
-input double  Risk_FVG    = 0.3;    // Fair value gap
-input double  Risk_H4     = 0.75;   // H4 EMA trend
-input double  Risk_DCH    = 0.5;    // Donchian DAX + UK100
-input double  Risk_DCH_US = 0.75;   // Donchian NAS100
-input double  Risk_DCH_GOLD = 0.4;  // Donchian Gold
-input double  Risk_LSR_GOLD = 0.3;  // Gold LSR
+input double  Risk_LB     = 0.4;
+input double  Risk_ORB    = 0.75;
+input double  Risk_NAS    = 0.75;
+input double  Risk_SP5    = 0.4;
+input double  Risk_NG     = 0.40;  // reduced — NatGas has high SL slippage
+input double  Risk_PDH_EU = 0.5;
+input double  Risk_PDH    = 0.4;
+input double  Risk_PWH_EU = 0.4;
+input double  Risk_PWH_US = 0.3;
+input double  Risk_AMD    = 0.4;
+input double  Risk_LSR    = 0.3;
+input double  Risk_FVG    = 0.3;
+input double  Risk_H4     = 0.75;
+input double  Risk_DCH    = 0.5;
+input double  Risk_DCH_US = 0.75;
+input double  Risk_DCH_GOLD = 0.4;
+input double  Risk_LSR_GOLD = 0.3;
 
-//--- Trail multipliers (from backtest_optimise2.py sweep)
-input double  Trail_ORB = 0.2;   // ORB / LB / PDH / PWH / AMD / LSR / FVG
-input double  Trail_H4  = 0.3;   // H4 EMA trend strategies
-input double  Trail_DCH = 0.4;   // Donchian 20-day breakout (wider — multi-day holds)
+//--- Trail multipliers
+input double  Trail_ORB = 0.2;
+input double  Trail_H4  = 0.3;
+input double  Trail_DCH = 0.4;
 
 //--- Safety
-input double  Max_Daily_Loss = 3.5;  // Stop new entries if daily loss >= this %
-
+input double  Max_Daily_Loss = 3.5;
 input int     Magic = 20250619;
 
-//--- Daily fired flags — ORB / LB
+//--- Daily fired flags
 bool lb_eur_fired, lb_gbp_fired, dax_orb_fired;
 bool nas_fired, sp5_fired, ng_fired, ng_h1_fired;
-//--- PDH
+//--- PDH (UK100+NG removed)
 bool pdh_dax_fired, pdh_nas_fired;
-bool pdh_sp5_fired, pdh_ng_fired, pdh_gbpjpy_fired;
-//--- PWH
-bool pwh_dax_fired, pwh_uk100_fired, pwh_nas_fired, pwh_sp5_fired;
+bool pdh_sp5_fired, pdh_gbpjpy_fired;
+//--- PWH (UK100+DAX+SP5 removed)
+bool pwh_nas_fired;
 //--- AMD
 bool amd_eur_fired, amd_gbp_fired, amd_nas_fired;
-//--- LSR
+//--- LSR (UK100 re-added with D1 bias)
 bool lsr_uk100_fired, lsr_nas_fired, lsr_eur_fired;
 //--- FVG
 bool fvg_eur_fired;
-//--- H4 EMA
+//--- H4 EMA (EURCHF removed)
 bool h4_dax_fired, h4_oil_fired, h4_uk100_fired;
-bool h4_eurchf_fired, h4_gbpjpy_fired, h4_usdchf_fired;
+bool h4_gbpjpy_fired, h4_usdchf_fired;
 bool h4_eurusd_fired, h4_gbpusd_fired, h4_eurjpy_fired;
-//--- Donchian 20-day
+//--- Donchian
 bool dch_dax_fired, dch_uk100_fired, dch_nas_fired, dch_gold_fired;
 //--- Gold LSR
 bool lsr_gold_fired;
 
 datetime last_reset = 0;
 
-//--- Daily loss circuit breaker
 double   g_day_open_equity = 0;
 datetime g_day_start       = 0;
 
@@ -156,7 +152,7 @@ int OnInit()
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
-   Print("11botV3 started — 36 strategies | Circuit breaker: ",
+   Print("11botV3 started — 34 strategies | Circuit breaker: ",
          Max_Daily_Loss, "% daily loss limit");
    return INIT_SUCCEEDED;
 }
@@ -168,68 +164,56 @@ void OnTimer()
 {
    ResetDaily();
    ManageTrails();
-   if(DailyLossExceeded()) return;  // circuit breaker
+   if(DailyLossExceeded()) return;
 
-   // ── London Breakout ──────────────────────────────────────────────
    CheckLBEur();
    CheckLBGbp();
 
-   // ── Session ORBs ─────────────────────────────────────────────────
    CheckDAXOrb();
    CheckNAS100();
    CheckSP500();
    CheckNatGas();
    CheckNatGasH1();
 
-   // ── PDH / PDL Breakout ───────────────────────────────────────────
+   // PDH (UK100/NG removed; DAX+SP5 use D1 bias filter)
    CheckPDH(Sym_DAX,    Risk_PDH_EU, 8,  17, pdh_dax_fired,    "PDH_DAX",    true);
    CheckPDH(Sym_GBPJPY, Risk_PDH,    7,  17, pdh_gbpjpy_fired, "PDH_GBPJPY");
    CheckPDH(Sym_NAS100, Risk_PDH,   14,  21, pdh_nas_fired,    "PDH_NAS");
    CheckPDH(Sym_SP500,  Risk_PDH,   14,  21, pdh_sp5_fired,    "PDH_SP5",    true);
-   CheckPDH(Sym_NATGAS, Risk_PDH,   14,  21, pdh_ng_fired,     "PDH_NG");
+   // PDH_NG removed — PF 1.00 after spread/slippage
 
-   // ── Previous Week High/Low ───────────────────────────────────────
-   CheckPWH(Sym_DAX,    Risk_PWH_EU, 8,  17, pwh_dax_fired,    "PWH_DAX");
-   CheckPWH(Sym_UK100,  Risk_PWH_EU, 8,  17, pwh_uk100_fired,  "PWH_UK100");
+   // PWH (UK100/DAX/SP5 removed)
    CheckPWH(Sym_NAS100, Risk_PWH_US, 14, 21, pwh_nas_fired,    "PWH_NAS");
-   CheckPWH(Sym_SP500,  Risk_PWH_US, 14, 21, pwh_sp5_fired,    "PWH_SP5");
+   // PWH_DAX removed — PF 1.11 | PWH_SP5 removed — PF 0.89
 
-   // ── AMD Manipulation Reversal ────────────────────────────────────
    CheckAMD(Sym_EURUSD, Risk_AMD, "AMD_EUR", amd_eur_fired);
    CheckAMD(Sym_GBPUSD, Risk_AMD, "AMD_GBP", amd_gbp_fired);
    CheckAMDUS(Sym_NAS100, Risk_AMD, "AMD_NAS", amd_nas_fired);
 
-   // ── Liquidity Sweep Reversal ─────────────────────────────────────
-   CheckLSR(Sym_UK100,  Risk_LSR, 8,  17, lsr_uk100_fired, "LSR_UK100");
+   // LSR (UK100 re-added with D1 bias — PF 2.02)
+   CheckLSR(Sym_UK100,  Risk_LSR, 8,  17, lsr_uk100_fired, "LSR_UK100", true);
    CheckLSR(Sym_NAS100, Risk_LSR, 14, 21, lsr_nas_fired,   "LSR_NAS");
    CheckLSR(Sym_EURUSD, Risk_LSR, 7,  17, lsr_eur_fired,   "LSR_EUR");
 
-   // ── Fair Value Gap ───────────────────────────────────────────────
    CheckFVG(Sym_EURUSD, Risk_FVG, 7, 17, fvg_eur_fired, "FVG_EUR");
 
-   // ── H4 EMA Trend ─────────────────────────────────────────────────
    CheckH4(Sym_DAX,    Risk_H4, 8,  16, h4_dax_fired,    "H4_DAX");
-   // Oil H4 EMA disabled — USOIL not available on this broker
-   CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100");
-   CheckH4(Sym_EURCHF, Risk_H4, 8,  17, h4_eurchf_fired, "H4_EURCHF");
+   CheckH4(Sym_UK100,  Risk_H4, 8,  16, h4_uk100_fired,  "H4_UK100",  true); // D1 bias
+   // H4_EURCHF removed — PF 0.99 after spread/slippage
    CheckH4(Sym_GBPJPY, Risk_H4, 0,  21, h4_gbpjpy_fired, "H4_GBPJPY");
    CheckH4(Sym_USDCHF, Risk_H4, 8,  17, h4_usdchf_fired, "H4_USDCHF");
    CheckH4(Sym_EURUSD, Risk_H4, 7,  17, h4_eurusd_fired, "H4_EURUSD");
    CheckH4(Sym_GBPUSD, Risk_H4, 7,  17, h4_gbpusd_fired, "H4_GBPUSD");
    CheckH4(Sym_EURJPY, Risk_H4, 7,  17, h4_eurjpy_fired, "H4_EURJPY");
 
-   // ── Donchian 20-Day Breakout ──────────────────────────────────────
    CheckDonchian(Sym_DAX,    Risk_DCH,      8,  17, dch_dax_fired,   "DCH_DAX");
    CheckDonchian(Sym_UK100,  Risk_DCH,      8,  17, dch_uk100_fired, "DCH_UK100");
    CheckDonchian(Sym_NAS100, Risk_DCH_US,  14,  21, dch_nas_fired,   "DCH_NAS");
    CheckDonchian(Sym_GOLD,   Risk_DCH_GOLD, 8,  20, dch_gold_fired,  "DCH_GOLD");
 
-   // ── Gold LSR ─────────────────────────────────────────────────────
    CheckLSR(Sym_GOLD, Risk_LSR_GOLD, 8, 20, lsr_gold_fired, "LSR_GOLD");
 }
 
-//+------------------------------------------------------------------+
-//| Daily loss circuit breaker                                       |
 //+------------------------------------------------------------------+
 bool DailyLossExceeded()
 {
@@ -258,23 +242,22 @@ void ResetDaily()
                     dt.year, dt.mon, dt.day));
    if(today == last_reset) return;
 
-   // Reset all fired flags
    lb_eur_fired = lb_gbp_fired = dax_orb_fired = false;
    nas_fired    = sp5_fired    = ng_fired = ng_h1_fired = false;
    pdh_dax_fired = pdh_nas_fired = false;
-   pdh_sp5_fired = pdh_ng_fired   = pdh_gbpjpy_fired = false;
-   pwh_dax_fired = pwh_uk100_fired = pwh_nas_fired = pwh_sp5_fired = false;
-   amd_eur_fired = amd_gbp_fired  = amd_nas_fired = false;
+   pdh_sp5_fired = pdh_gbpjpy_fired = false;
+   pwh_nas_fired = false;
+   amd_eur_fired = amd_gbp_fired = amd_nas_fired = false;
    lsr_uk100_fired = lsr_nas_fired = lsr_eur_fired = false;
    fvg_eur_fired = false;
    h4_dax_fired = h4_oil_fired = h4_uk100_fired = false;
-   h4_eurchf_fired = h4_gbpjpy_fired = h4_usdchf_fired = false;
+   h4_gbpjpy_fired = h4_usdchf_fired = false;
    h4_eurusd_fired = h4_gbpusd_fired = h4_eurjpy_fired = false;
    dch_dax_fired = dch_uk100_fired = dch_nas_fired = dch_gold_fired = false;
    lsr_gold_fired = false;
 
-   last_reset         = today;
-   g_day_open_equity  = AccountInfoDouble(ACCOUNT_EQUITY);
+   last_reset        = today;
+   g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    CleanTrails();
    Print("Daily reset — equity open: £", DoubleToString(g_day_open_equity,0));
 }
@@ -338,8 +321,6 @@ void DoSell(string sym, double sl, double risk_pct, string tag)
 }
 
 //+------------------------------------------------------------------+
-//| ATR helper                                                       |
-//+------------------------------------------------------------------+
 double GetATR(string sym, ENUM_TIMEFRAMES tf, int period)
 {
    int h = iATR(sym, tf, period);
@@ -350,8 +331,6 @@ double GetATR(string sym, ENUM_TIMEFRAMES tf, int period)
    return ok ? buf[1] : 0;
 }
 
-//+------------------------------------------------------------------+
-//| Trail management                                                 |
 //+------------------------------------------------------------------+
 double TrailMult(string comment)
 {
@@ -411,7 +390,6 @@ void ManageTrails()
       double sl_cur=pos.StopLoss(); double sld=MathAbs(entry-sl_cur);
       ulong ticket=pos.Ticket();
 
-      // Use stored orig_sld when SL is at BE (sld=0), ATR fallback for old trades
       double eff_sld=sld>0 ? sld : GetOrigSld(ticket);
       if(eff_sld<=0)
       {
@@ -444,8 +422,6 @@ void ManageTrails()
 }
 
 //+------------------------------------------------------------------+
-//| H1 range helpers                                                 |
-//+------------------------------------------------------------------+
 double H1Hi(string sym, int shift, int n)
 {
    MqlRates r[]; if(CopyRates(sym,PERIOD_H1,shift,n,r)<1) return 0;
@@ -462,8 +438,6 @@ bool GetH1(string sym, int shift, double &hi, double &lo)
    hi=r[0].high; lo=r[0].low; return true;
 }
 
-//+------------------------------------------------------------------+
-//| 1-2. LONDON BREAKOUT                                             |
 //+------------------------------------------------------------------+
 void CheckLBSingle(string sym, double pip, bool &fired, string tag)
 {
@@ -490,8 +464,6 @@ void CheckLBGbp()
 }
 
 //+------------------------------------------------------------------+
-//| 3. DAX ORB                                                       |
-//+------------------------------------------------------------------+
 void CheckDAXOrb()
 {
    int h=UTCHour();
@@ -504,8 +476,6 @@ void CheckDAXOrb()
    else if(bid<lo){DoSell(Sym_DAX,hi,Risk_ORB,"DAX_ORB_S");dax_orb_fired=true;}
 }
 
-//+------------------------------------------------------------------+
-//| 4-5. NAS100 + SP500 OPEN (Tue-Fri)                               |
 //+------------------------------------------------------------------+
 void CheckNAS100()
 {
@@ -534,8 +504,6 @@ void CheckSP500()
    else if(bid<lo){DoSell(Sym_SP500,hi,Risk_SP5,"SP5_S");sp5_fired=true;}
 }
 
-//+------------------------------------------------------------------+
-//| 6. NATGAS OPEN + H1 EMA FALLBACK                                 |
 //+------------------------------------------------------------------+
 void CheckNatGas()
 {
@@ -571,8 +539,6 @@ void CheckNatGasH1()
 }
 
 //+------------------------------------------------------------------+
-//| D1 20-SMA bias: +1 bullish, -1 bearish, 0 unknown               |
-//+------------------------------------------------------------------+
 int GetD1Bias(string sym)
 {
    int h=iMA(sym,PERIOD_D1,20,0,MODE_SMA,PRICE_CLOSE);
@@ -586,9 +552,6 @@ int GetD1Bias(string sym)
    return cl>sma[0] ? 1 : -1;
 }
 
-//+------------------------------------------------------------------+
-//| 7-11. PDH/PDL BREAKOUT                                           |
-//+------------------------------------------------------------------+
 void CheckPDH(string sym, double risk, int s_start, int s_end,
               bool &fired, string tag, bool use_bias=false)
 {
@@ -608,8 +571,6 @@ void CheckPDH(string sym, double risk, int s_start, int s_end,
 }
 
 //+------------------------------------------------------------------+
-//| 13-16. PREVIOUS WEEK HIGH/LOW BREAKOUT (PF 7-11 on indices)     |
-//+------------------------------------------------------------------+
 void CheckPWH(string sym, double risk, int s_start, int s_end,
               bool &fired, string tag)
 {
@@ -628,48 +589,29 @@ void CheckPWH(string sym, double risk, int s_start, int s_end,
 }
 
 //+------------------------------------------------------------------+
-//| 17-18. AMD MANIPULATION REVERSAL — EURUSD / GBPUSD              |
-//| Asian range swept (07:00-09:00 UTC), H1 candle closes back inside|
-//+------------------------------------------------------------------+
 void CheckAMD(string sym, double risk, string tag, bool &fired)
 {
    if(fired||HasPosition(sym)) return;
    int h=UTCHour(); if(h<7||h>=9) return;
-
-   // Asian range: yesterday 22:00 → today 07:00 (9 bars)
    double a_hi=H1Hi(sym,3,9), a_lo=H1Lo(sym,3,9);
    double rng=a_hi-a_lo; if(rng<=0) return;
-
    double a=GetATR(sym,PERIOD_H1,14); if(a<=0) return;
-
-   // Last completed H1 bar
    MqlRates cur[]; if(CopyRates(sym,PERIOD_H1,1,1,cur)<1) return;
-
-   // Bearish sweep: wick above Asian high, close below → sell
    if(cur[0].high>a_hi && cur[0].close<a_hi && (cur[0].high-a_hi)<rng*0.6)
       {DoSell(sym,cur[0].high+a*0.1,risk,tag+"_S"); fired=true; return;}
-   // Bullish sweep: wick below Asian low, close above → buy
    if(cur[0].low<a_lo && cur[0].close>a_lo && (a_lo-cur[0].low)<rng*0.6)
       {DoBuy (sym,cur[0].low-a*0.1, risk,tag+"_B"); fired=true;}
 }
 
 //+------------------------------------------------------------------+
-//| 19. AMD NAS100 — checks 14:00-16:00 against NY pre-market range  |
-//| Pre-market range = H1 bars 12:00-14:00 (like Asian range for FX) |
-//+------------------------------------------------------------------+
 void CheckAMDUS(string sym, double risk, string tag, bool &fired)
 {
    if(fired||HasPosition(sym)) return;
    int h=UTCHour(); if(h<14||h>=16) return;
-
-   // Pre-market range: 12:00-13:00 (2 bars before NY open)
    double pm_hi=H1Hi(sym,2,2), pm_lo=H1Lo(sym,2,2);
    double rng=pm_hi-pm_lo; if(rng<=0) return;
-
    double a=GetATR(sym,PERIOD_H1,14); if(a<=0) return;
-
    MqlRates cur[]; if(CopyRates(sym,PERIOD_H1,1,1,cur)<1) return;
-
    if(cur[0].high>pm_hi && cur[0].close<pm_hi && (cur[0].high-pm_hi)<rng*0.6)
       {DoSell(sym,cur[0].high+a*0.1,risk,tag+"_S"); fired=true; return;}
    if(cur[0].low<pm_lo && cur[0].close>pm_lo && (pm_lo-cur[0].low)<rng*0.6)
@@ -677,11 +619,8 @@ void CheckAMDUS(string sym, double risk, string tag, bool &fired)
 }
 
 //+------------------------------------------------------------------+
-//| 20-22. LIQUIDITY SWEEP REVERSAL                                  |
-//| PDH/PDL wick with close back inside → enter opposite direction   |
-//+------------------------------------------------------------------+
 void CheckLSR(string sym, double risk, int s_start, int s_end,
-              bool &fired, string tag)
+              bool &fired, string tag, bool use_bias=false)
 {
    int h=UTCHour();
    if(h<s_start||h>=s_end||fired||HasPosition(sym)) return;
@@ -689,18 +628,13 @@ void CheckLSR(string sym, double risk, int s_start, int s_end,
    if(pdh<=0||pdl<=0) return;
    double a=GetATR(sym,PERIOD_H1,14); if(a<=0) return;
    MqlRates cur[]; if(CopyRates(sym,PERIOD_H1,1,1,cur)<1) return;
-   // Bearish sweep of PDH: wick above, close below
-   if(cur[0].high>pdh && cur[0].close<pdh && (cur[0].high-pdh)<0.6*a)
+   int d1=use_bias ? GetD1Bias(sym) : 0;
+   if(cur[0].high>pdh && cur[0].close<pdh && (cur[0].high-pdh)<0.6*a && (!use_bias||d1==-1))
       {DoSell(sym,cur[0].high+a*0.1,risk,tag+"_S"); fired=true; return;}
-   // Bullish sweep of PDL: wick below, close above
-   if(cur[0].low<pdl && cur[0].close>pdl && (pdl-cur[0].low)<0.6*a)
+   if(cur[0].low<pdl && cur[0].close>pdl && (pdl-cur[0].low)<0.6*a && (!use_bias||d1==1))
       {DoBuy (sym,cur[0].low-a*0.1, risk,tag+"_B"); fired=true;}
 }
 
-//+------------------------------------------------------------------+
-//| 23. FAIR VALUE GAP — EURUSD                                      |
-//| Scan last 24 H1 bars for 3-bar imbalance gaps. If current price  |
-//| enters a bullish FVG zone → buy; bearish FVG zone → sell.        |
 //+------------------------------------------------------------------+
 void CheckFVG(string sym, double risk, int s_start, int s_end,
               bool &fired, string tag)
@@ -710,43 +644,28 @@ void CheckFVG(string sym, double risk, int s_start, int s_end,
    double a=GetATR(sym,PERIOD_H1,14); if(a<=0) return;
    double bid=SymbolInfoDouble(sym,SYMBOL_BID);
    double ask=SymbolInfoDouble(sym,SYMBOL_ASK);
-
    MqlRates bars[];
-   if(CopyRates(sym,PERIOD_H1,2,22,bars)<10) return;  // bars[0]=oldest, shift 2-24
-
+   if(CopyRates(sym,PERIOD_H1,2,22,bars)<10) return;
    for(int i=2; i<ArraySize(bars); i++)
    {
-      double gap_bull = bars[i].low  - bars[i-2].high;  // bullish FVG
-      double gap_bear = bars[i-2].low - bars[i].high;   // bearish FVG
-
-      // Bullish FVG: ask in the gap zone → buy (continuation expected)
+      double gap_bull = bars[i].low  - bars[i-2].high;
+      double gap_bear = bars[i-2].low - bars[i].high;
       if(gap_bull > a*0.15)
       {
          double lo=bars[i-2].high, hi=bars[i].low;
-         if(ask>=lo && ask<=hi)
-         {
-            DoBuy(sym, lo-0.5*a, risk, tag+"_B");
-            fired=true; return;
-         }
+         if(ask>=lo && ask<=hi) {DoBuy(sym,lo-0.5*a,risk,tag+"_B");fired=true;return;}
       }
-      // Bearish FVG: bid in the gap zone → sell
       if(gap_bear > a*0.15)
       {
          double lo=bars[i].high, hi=bars[i-2].low;
-         if(bid>=lo && bid<=hi)
-         {
-            DoSell(sym, hi+0.5*a, risk, tag+"_S");
-            fired=true; return;
-         }
+         if(bid>=lo && bid<=hi) {DoSell(sym,hi+0.5*a,risk,tag+"_S");fired=true;return;}
       }
    }
 }
 
 //+------------------------------------------------------------------+
-//| 24-29. H4 EMA TREND                                              |
-//+------------------------------------------------------------------+
 void CheckH4(string sym, double risk, int s_start, int s_end,
-             bool &fired, string tag)
+             bool &fired, string tag, bool use_bias=false)
 {
    int h=UTCHour();
    bool in_sess=(s_start<=s_end)?(h>=s_start&&h<s_end):(h>=s_start||h<s_end);
@@ -764,18 +683,12 @@ void CheckH4(string sym, double risk, int s_start, int s_end,
    bool bull=e10[1]>e20[1]&&e10[2]<=e20[2];
    bool bear=e10[1]<e20[1]&&e10[2]>=e20[2];
    if(!bull&&!bear) return;
+   int d1=use_bias ? GetD1Bias(sym) : 0;
    double a=atr[1];
-   if(bull){DoBuy (sym,SymbolInfoDouble(sym,SYMBOL_ASK)-1.5*a,risk,tag+"_B");fired=true;}
-   else    {DoSell(sym,SymbolInfoDouble(sym,SYMBOL_BID)+1.5*a,risk,tag+"_S");fired=true;}
+   if(bull&&(!use_bias||d1==1)) {DoBuy (sym,SymbolInfoDouble(sym,SYMBOL_ASK)-1.5*a,risk,tag+"_B");fired=true;}
+   else if(bear&&(!use_bias||d1==-1)){DoSell(sym,SymbolInfoDouble(sym,SYMBOL_BID)+1.5*a,risk,tag+"_S");fired=true;}
 }
 
-//+------------------------------------------------------------------+
-//| 33-36. DONCHIAN 20-DAY BREAKOUT                                  |
-//| Classic Turtle / institutional level breakout.                    |
-//| Entry when price breaks 20-day high or low.                      |
-//| Filter: H4 ADX > 25 — only in genuine trending conditions.       |
-//| SL: 2.0x H1 ATR. Trail: 0.4R (wider — holds multi-day trends)   |
-//| PF 1.58-2.51 across DAX/UK100/NAS100/Gold in 2-year backtest     |
 //+------------------------------------------------------------------+
 void CheckDonchian(string sym, double risk, int s_start, int s_end,
                    bool &fired, string tag)
@@ -783,34 +696,24 @@ void CheckDonchian(string sym, double risk, int s_start, int s_end,
    int h=UTCHour();
    bool in_sess=(s_start<=s_end)?(h>=s_start&&h<s_end):(h>=s_start||h<s_end);
    if(!in_sess||fired||HasPosition(sym)) return;
-
-   // 20-day rolling high/low — last 20 completed daily bars
    double hi20[20], lo20[20];
    ArraySetAsSeries(hi20,true); ArraySetAsSeries(lo20,true);
    if(CopyHigh(sym,PERIOD_D1,1,20,hi20)<20) return;
    if(CopyLow (sym,PERIOD_D1,1,20,lo20)<20) return;
    double d20hi=hi20[ArrayMaximum(hi20,0,20)];
    double d20lo=lo20[ArrayMinimum(lo20,0,20)];
-
-   // ADX filter on H4 — only trade genuine trends
    int h_adx=iADX(sym,PERIOD_H4,14);
    if(h_adx==INVALID_HANDLE) return;
    double adx_v[2]; ArraySetAsSeries(adx_v,true);
    bool ok=CopyBuffer(h_adx,0,0,2,adx_v)>=2;
    IndicatorRelease(h_adx);
    if(!ok||adx_v[0]<25) return;
-
-   // ATR on H1 for SL sizing (wider than other strategies = fewer lots = multi-day hold)
    double a=GetATR(sym,PERIOD_H1,14);
    if(a<=0) return;
-
    SymbolSelect(sym,true);
    double bid=SymbolInfoDouble(sym,SYMBOL_BID);
    double ask=SymbolInfoDouble(sym,SYMBOL_ASK);
-
-   if(ask>d20hi)
-      {DoBuy (sym,ask-2.0*a,risk,tag+"_B"); fired=true;}
-   else if(bid<d20lo)
-      {DoSell(sym,bid+2.0*a,risk,tag+"_S"); fired=true;}
+   if(ask>d20hi)   {DoBuy (sym,ask-2.0*a,risk,tag+"_B");fired=true;}
+   else if(bid<d20lo){DoSell(sym,bid+2.0*a,risk,tag+"_S");fired=true;}
 }
 //+------------------------------------------------------------------+
