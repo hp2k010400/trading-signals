@@ -543,7 +543,7 @@ def run_h4(key, tag, hs, he):
 
 # ── Strategy runner ───────────────────────────────────────────────────────────
 def run_portfolio(print_table=True):
-    """Run all strategies, return combined stats dict. Uses global PARTIAL_R."""
+    """Run all strategies, return combined stats dict. Uses global PARTIAL_R/BT_FROM/BT_TO."""
     global results
     results = []
     W = 65
@@ -665,7 +665,6 @@ if __name__ == '__main__':
     # ── Walk-forward split ───────────────────────────────────────────────────
     mid = pd.Timestamp('2025-01-01', tz='UTC')
 
-    global BT_FROM, BT_TO
     BT_FROM = None; BT_TO = mid
     sy1 = run_portfolio(print_table=False)
 
