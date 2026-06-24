@@ -137,17 +137,32 @@ def calc_adx(df, p=14):
 def sim(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
     """
     Simulate a trade on H1 bars. Returns R ratio.
-    If PARTIAL_R is set, closes 50% at PARTIAL_R profit and trails the rest.
+    trail_mult = 0  → no trail, hold to max_bars (pure SL + time exit)
+    trail_mult > 0  → trail at trail_mult * SL_distance behind best price
     """
     sl_d = abs(entry - sl)
     if sl_d <= 0: return 0.0
+
+    # No trail mode — just SL and max_bars exit
+    if trail_mult <= 0:
+        bars = df.iloc[entry_pos+1 : entry_pos+1+max_bars]
+        last_price = entry
+        for _, b in bars.iterrows():
+            last_price = b['close']
+            if direction == 1 and b['low'] <= sl:
+                return (sl - entry) / sl_d
+            if direction == -1 and b['high'] >= sl:
+                return (entry - sl) / sl_d
+        pts = (last_price - entry) if direction == 1 else (entry - last_price)
+        return pts / sl_d
+
     trail    = sl_d * trail_mult
     cur_sl   = sl
     best     = entry
     be       = False
     partial_done = False
-    locked_r = 0.0    # R locked in from partial close
-    size     = 1.0    # remaining position size (halved after partial)
+    locked_r = 0.0
+    size     = 1.0
 
     bars = df.iloc[entry_pos+1 : entry_pos+1+max_bars]
     last_price = entry
@@ -164,7 +179,7 @@ def sim(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
                 ns = best - trail
                 if ns > cur_sl: cur_sl = ns
             if PARTIAL_R and not partial_done and best >= entry + PARTIAL_R * sl_d:
-                locked_r     = PARTIAL_R * 0.5     # lock in PARTIAL_R R on 50%
+                locked_r     = PARTIAL_R * 0.5
                 partial_done = True
                 size         = 0.5
         else:                                       # SELL
@@ -686,4 +701,42 @@ if __name__ == '__main__':
     print(f"  {'Monthly P&L (£)':<22} {sy1['mo']:>20,.0f} {sy2['mo']:>22,.0f}")
     verdict = "✅ EDGE HOLDS" if sy2['pf'] >= sy1['pf']*0.8 else "⚠️  DEGRADED — possible overfitting"
     print(f"\n  Year 2 PF is {sy2['pf']/sy1['pf']*100:.0f}% of Year 1 PF  →  {verdict}")
+
+    # ── Trail multiplier sweep ───────────────────────────────────────────────
+    # ORB trail is swept; H4 = ORB*1.5, DCH = ORB*2.0 (keep proportions)
+    global TRAIL_ORB, TRAIL_H4, TRAIL_DCH
+    SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
+
+    print("\n" + "="*W)
+    print("  TRAIL MULTIPLIER SWEEP  (ORB / H4 / DCH all scaled)")
+    print("="*W)
+    print(f"\n  {'ORB':>5}  {'H4':>5}  {'DCH':>5}  {'WR%':>6}  {'PF':>6}  "
+          f"{'Avg W':>7}  {'Avg L':>7}  {'£/mo':>8}")
+    print("  " + "─"*65)
+
+    best_pf = 0; best_t = 0.2
+    sweep_results = []
+    for t in SWEEP:
+        TRAIL_ORB = t
+        TRAIL_H4  = round(t * 1.5, 2)
+        TRAIL_DCH = round(t * 2.0, 2)
+        BT_FROM = None; BT_TO = None
+        st = run_portfolio(print_table=False)
+        sweep_results.append((t, st))
+        if st['pf'] > best_pf:
+            best_pf = st['pf']; best_t = t
+        marker = "  ← live" if abs(t - 0.2) < 0.01 else (
+                 "  ← BEST" if abs(t - best_t) < 0.01 and t != 0.2 else "")
+        label = "no trail" if t == 0.0 else f"{t:.1f}R"
+        h4l   = "no trail" if t == 0.0 else f"{TRAIL_H4:.2f}R"
+        dchl  = "no trail" if t == 0.0 else f"{TRAIL_DCH:.2f}R"
+        print(f"  {label:>8}  {h4l:>8}  {dchl:>8}  {st['wr']:>5.1f}%  {st['pf']:>6.2f}  "
+              f"£{st['avg_w']:>6,.0f}  £{st['avg_l']:>6,.0f}  £{st['mo']:>7,.0f}{marker}")
+
+    # Mark best after full sweep
+    print(f"\n  Optimal trail: {best_t:.1f}R  →  PF {best_pf:.2f}")
+    print(f"  Current live:  0.2R  →  PF {[s['pf'] for t,s in sweep_results if abs(t-0.2)<0.01][0]:.2f}")
+
+    # Restore
+    TRAIL_ORB = 0.20; TRAIL_H4 = 0.30; TRAIL_DCH = 0.40
     print()
