@@ -8,9 +8,13 @@ Matches live bot logic as closely as yfinance data allows:
   • 0.3R trail for H4 EMA
   • ATR-based SL for PDH/PWH/AMD/LSR/H4
   • One trade per strategy per day (daily fired flag)
+  • Spread + slippage modelled per strategy in R units (COST_R)
 
-Note: yfinance data = futures/spot proxies. Spread/slippage not included.
-      Directional edge is valid; exact £ amounts ~10-15% optimistic vs live.
+Spread/slippage model:
+  Breakout strategies (LB, ORB): 0.08R — tight entry + slippage on breakout level
+  Trend/PDH/PWH: 0.05-0.06R      — larger ATR SL so spread is smaller fraction
+  Reversal (AMD, LSR, FVG): 0.05-0.06R
+  H4 EMA: 0.04-0.05R             — biggest SL so cheapest in R terms
 
 Run in GitHub Codespaces:
   pip install yfinance pandas numpy && python backtest_system_combined.py
@@ -40,6 +44,23 @@ RISKS = {
     'FVG_EUR': 0.003,
     'H4_DAX': 0.0075,  'H4_UK100': 0.0075,
     'H4_EURCHF': 0.0075, 'H4_GBPJPY': 0.0075, 'H4_USDCHF': 0.0075,
+}
+
+# Spread + slippage per trade in R units
+# Entry spread + round-trip commission + execution slippage
+COST_R = {
+    'LB_EUR': 0.08,   'LB_GBP': 0.08,
+    'DAX_ORB': 0.07,  'NAS_ORB': 0.06,  'SP5_ORB': 0.06,  'NG_ORB': 0.06,
+    'NG_H1': 0.05,
+    'PDH_DAX': 0.06,  'PDH_UK100': 0.06, 'PDH_GBPJPY': 0.05,
+    'PDH_NAS': 0.05,  'PDH_SP5': 0.05,   'PDH_NG': 0.06,
+    'PWH_DAX': 0.06,  'PWH_UK100': 0.06,
+    'PWH_NAS': 0.05,  'PWH_SP5': 0.05,
+    'AMD_EUR': 0.06,  'AMD_GBP': 0.07,   'AMD_NAS': 0.05,
+    'LSR_UK100': 0.05,'LSR_NAS': 0.05,   'LSR_EUR': 0.05,
+    'FVG_EUR': 0.06,
+    'H4_DAX': 0.04,   'H4_UK100': 0.04,
+    'H4_EURCHF': 0.05,'H4_GBPJPY': 0.04, 'H4_USDCHF': 0.05,
 }
 
 YFSYMS = {
@@ -135,9 +156,10 @@ def sim(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
     pts = (last_price - entry) if direction == 1 else (entry - last_price)
     return pts / sl_d
 
-def make_trade(df, entry_pos, direction, entry, sl, trail_mult, risk_pct):
-    """Returns £P&L for a single trade."""
+def make_trade(df, entry_pos, direction, entry, sl, trail_mult, risk_pct, cost_r=0.0):
+    """Returns £P&L for a single trade, after deducting spread + slippage."""
     r_ratio = sim(df, entry_pos, direction, entry, sl, trail_mult)
+    r_ratio -= cost_r
     return r_ratio * risk_pct * ACCOUNT
 
 def ipos(df, ts):
@@ -172,7 +194,7 @@ def stats(name, trades):
 def run_lb(key, tag, skip_dow=set(), pip=0.0001):
     df = load_h1(key)
     if df is None: return []
-    trades = []; risk = RISKS[tag]
+    trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
     dates  = sorted(set(df.index.normalize().date))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
@@ -191,16 +213,16 @@ def run_lb(key, tag, skip_dow=set(), pip=0.0001):
             b  = edf.iloc[j]; p = ipos(df, edf.index[j])
             if p < 0: continue
             if b['high'] > a_hi:
-                trades.append(make_trade(df,p,1, a_hi, a_lo-buf,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,1, a_hi, a_lo-buf,TRAIL_ORB,risk,cost)); break
             if b['low']  < a_lo:
-                trades.append(make_trade(df,p,-1,a_lo, a_hi+buf,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,-1,a_lo, a_hi+buf,TRAIL_ORB,risk,cost)); break
     return trades
 
 # ── 3-6. ORB (DAX, NAS100, SP500, NatGas) ────────────────────────────────────
 def run_orb(key, tag, ref_h, es, ee, rmin, rmax, skip_dow=set()):
     df = load_h1(key)
     if df is None: return []
-    trades = []; risk = RISKS[tag]
+    trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
     dates  = sorted(set(df.index.normalize().date))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
@@ -215,9 +237,9 @@ def run_orb(key, tag, ref_h, es, ee, rmin, rmax, skip_dow=set()):
             b = edf.iloc[j]; p = ipos(df, edf.index[j])
             if p < 0: continue
             if b['high'] > rhi:
-                trades.append(make_trade(df,p,1, rhi,rlo,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,1, rhi,rlo,TRAIL_ORB,risk,cost)); break
             if b['low']  < rlo:
-                trades.append(make_trade(df,p,-1,rlo,rhi,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,-1,rlo,rhi,TRAIL_ORB,risk,cost)); break
     return trades
 
 # ── 7. NatGas H1 EMA fallback ─────────────────────────────────────────────────
@@ -228,7 +250,7 @@ def run_ng_h1(tag):
     ema20 = df['close'].ewm(span=20,adjust=False).mean()
     atr   = calc_atr(df, 14)
     adx   = calc_adx(df, 14)
-    trades = []; risk = RISKS[tag]
+    trades = []; risk = RISKS[tag]; cost = COST_R.get(tag, 0.06)
     dates  = sorted(set(df.index.normalize().date))
     fired_days = set()
     for i in range(21, len(df)-50):
@@ -242,9 +264,9 @@ def run_ng_h1(tag):
         if not bull and not bear: continue
         a = atr.iloc[i]; entry = df.iloc[i]['close']
         if bull:
-            trades.append(make_trade(df,i,1, entry,entry-1.5*a,TRAIL_ORB,risk))
+            trades.append(make_trade(df,i,1, entry,entry-1.5*a,TRAIL_ORB,risk,cost))
         else:
-            trades.append(make_trade(df,i,-1,entry,entry+1.5*a,TRAIL_ORB,risk))
+            trades.append(make_trade(df,i,-1,entry,entry+1.5*a,TRAIL_ORB,risk,cost))
         fired_days.add(day)
     return trades
 
@@ -252,7 +274,7 @@ def run_ng_h1(tag):
 def run_pdh(key, tag, hs, he):
     df = load_h1(key)
     if df is None: return []
-    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]
+    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.06)
     dates = sorted(set(df.index.normalize().date))
     for date in dates:
         day  = pd.Timestamp(date, tz='UTC')
@@ -273,16 +295,16 @@ def run_pdh(key, tag, hs, he):
             p = ipos(df, edf.index[j])
             if p < 0 or av <= 0: continue
             if b['high'] > pdh+buf:
-                trades.append(make_trade(df,p,1, b['close'],b['close']-1.5*av,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,1, b['close'],b['close']-1.5*av,TRAIL_ORB,risk,cost)); break
             if b['low']  < pdl-buf:
-                trades.append(make_trade(df,p,-1,b['close'],b['close']+1.5*av,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,-1,b['close'],b['close']+1.5*av,TRAIL_ORB,risk,cost)); break
     return trades
 
 # ── 14-17. PWH/PWL breakout ───────────────────────────────────────────────────
 def run_pwh(key, tag, hs, he):
     df = load_h1(key)
     if df is None: return []
-    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]
+    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.06)
     dates = sorted(set(df.index.normalize().date))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
@@ -305,16 +327,16 @@ def run_pwh(key, tag, hs, he):
             p = ipos(df, edf.index[j])
             if p < 0 or av <= 0: continue
             if b['high'] > pwh+buf:
-                trades.append(make_trade(df,p,1, b['close'],b['close']-1.5*av,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,1, b['close'],b['close']-1.5*av,TRAIL_ORB,risk,cost)); break
             if b['low']  < pwl-buf:
-                trades.append(make_trade(df,p,-1,b['close'],b['close']+1.5*av,TRAIL_ORB,risk)); break
+                trades.append(make_trade(df,p,-1,b['close'],b['close']+1.5*av,TRAIL_ORB,risk,cost)); break
     return trades
 
 # ── 18-20. AMD manipulation reversal ─────────────────────────────────────────
 def run_amd(key, tag, hs, he, asian_hrs=(22,7)):
     df = load_h1(key)
     if df is None: return []
-    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]
+    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.06)
     dates = sorted(set(df.index.normalize().date))
     for date in dates:
         day  = pd.Timestamp(date, tz='UTC')
@@ -338,10 +360,10 @@ def run_amd(key, tag, hs, he, asian_hrs=(22,7)):
             p = ipos(df, edf.index[j])
             if p < 0 or av <= 0: continue
             if b['high']>a_hi and b['close']<a_hi and (b['high']-a_hi)<rng*0.6:
-                trades.append(make_trade(df,p,-1,b['close'],b['high']+av*0.1,TRAIL_ORB,risk))
+                trades.append(make_trade(df,p,-1,b['close'],b['high']+av*0.1,TRAIL_ORB,risk,cost))
                 fired=True
             elif b['low']<a_lo and b['close']>a_lo and (a_lo-b['low'])<rng*0.6:
-                trades.append(make_trade(df,p,1, b['close'],b['low']-av*0.1, TRAIL_ORB,risk))
+                trades.append(make_trade(df,p,1, b['close'],b['low']-av*0.1, TRAIL_ORB,risk,cost))
                 fired=True
     return trades
 
@@ -349,7 +371,7 @@ def run_amd(key, tag, hs, he, asian_hrs=(22,7)):
 def run_lsr(key, tag, hs, he):
     df = load_h1(key)
     if df is None: return []
-    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]
+    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.06)
     dates = sorted(set(df.index.normalize().date))
     for date in dates:
         day  = pd.Timestamp(date, tz='UTC')
@@ -367,10 +389,10 @@ def run_lsr(key, tag, hs, he):
             p = ipos(df, edf.index[j])
             if p < 0 or av <= 0: continue
             if b['high']>pdh and b['close']<pdh and (b['high']-pdh)<0.6*av:
-                trades.append(make_trade(df,p,-1,b['close'],b['high']+av*0.1,TRAIL_ORB,risk))
+                trades.append(make_trade(df,p,-1,b['close'],b['high']+av*0.1,TRAIL_ORB,risk,cost))
                 fired=True
             elif b['low']<pdl and b['close']>pdl and (pdl-b['low'])<0.6*av:
-                trades.append(make_trade(df,p,1, b['close'],b['low']-av*0.1, TRAIL_ORB,risk))
+                trades.append(make_trade(df,p,1, b['close'],b['low']-av*0.1, TRAIL_ORB,risk,cost))
                 fired=True
     return trades
 
@@ -378,7 +400,7 @@ def run_lsr(key, tag, hs, he):
 def run_fvg(key, tag, hs, he):
     df = load_h1(key)
     if df is None: return []
-    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]
+    atr = calc_atr(df,14); trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.06)
     dates = sorted(set(df.index.normalize().date))
     for date in dates:
         day = pd.Timestamp(date, tz='UTC')
@@ -398,12 +420,12 @@ def run_fvg(key, tag, hs, he):
                 if gap_bull > av*0.15:
                     lo_z=lb.iloc[k-2]['high']; hi_z=lb.iloc[k]['low']
                     if lo_z <= b['close'] <= hi_z:
-                        trades.append(make_trade(df,p,1, b['close'],lo_z-0.5*av,TRAIL_ORB,risk))
+                        trades.append(make_trade(df,p,1, b['close'],lo_z-0.5*av,TRAIL_ORB,risk,cost))
                         fired=True; break
                 if gap_bear > av*0.15:
                     lo_z=lb.iloc[k]['high']; hi_z=lb.iloc[k-2]['low']
                     if lo_z <= b['close'] <= hi_z:
-                        trades.append(make_trade(df,p,-1,b['close'],hi_z+0.5*av,TRAIL_ORB,risk))
+                        trades.append(make_trade(df,p,-1,b['close'],hi_z+0.5*av,TRAIL_ORB,risk,cost))
                         fired=True; break
     return trades
 
@@ -415,8 +437,7 @@ def run_h4(key, tag, hs, he):
     ema20 = df4['close'].ewm(span=20,adjust=False).mean()
     atr4  = calc_atr(df4,14)
     adx4  = calc_adx(df4,14)
-    trades=[]; risk=RISKS[tag]
-    # Precompute crossover signals
+    trades=[]; risk=RISKS[tag]; cost=COST_R.get(tag,0.05)
     for i in range(2, len(df4)-1):
         if adx4.iloc[i] < 25: continue
         a4 = atr4.iloc[i]
@@ -425,11 +446,9 @@ def run_h4(key, tag, hs, he):
         bear = ema10.iloc[i]<ema20.iloc[i] and ema10.iloc[i-1]>=ema20.iloc[i-1]
         if not bull and not bear: continue
         sig_time = df4.index[i]
-        # Find first H1 bar in session after this H4 signal
         day = sig_time.normalize()
         sess_s = day + pd.Timedelta(hours=hs)
         sess_e = day + pd.Timedelta(hours=he)
-        # If signal is before session, use today's session; if after, skip (next H4 needed)
         if sig_time > sess_e:
             continue
         start = max(sig_time, sess_s)
@@ -438,9 +457,9 @@ def run_h4(key, tag, hs, he):
         b = edf.iloc[0]; p = ipos(df1, edf.index[0])
         if p < 0: continue
         if bull:
-            trades.append(make_trade(df1,p,1, b['close'],b['close']-1.5*a4,TRAIL_H4,risk))
+            trades.append(make_trade(df1,p,1, b['close'],b['close']-1.5*a4,TRAIL_H4,risk,cost))
         else:
-            trades.append(make_trade(df1,p,-1,b['close'],b['close']+1.5*a4,TRAIL_H4,risk))
+            trades.append(make_trade(df1,p,-1,b['close'],b['close']+1.5*a4,TRAIL_H4,risk,cost))
     return trades
 
 # ── Main ──────────────────────────────────────────────────────────────────────
