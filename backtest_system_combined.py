@@ -32,6 +32,9 @@ TRAIL_ORB = 0.20
 TRAIL_H4  = 0.30
 TRAIL_DCH = 0.40
 
+# Partial close config — set to None to disable, or float e.g. 1.0 = close 50% at 1R profit
+PARTIAL_R = None   # toggled at runtime — see main block
+
 RISKS = {
     'LB_EUR': 0.004,  'LB_GBP': 0.004,
     'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004, 'NG_ORB': 0.0075,
@@ -125,44 +128,53 @@ def calc_adx(df, p=14):
 # ── Trade simulator ───────────────────────────────────────────────────────────
 def sim(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
     """
-    Simulate a trade on H1 bars. entry_pos = integer index in df.
-    Returns P&L in £.
+    Simulate a trade on H1 bars. Returns R ratio.
+    If PARTIAL_R is set, closes 50% at PARTIAL_R profit and trails the rest.
     """
     sl_d = abs(entry - sl)
     if sl_d <= 0: return 0.0
-    risk   = ACCOUNT * 0.005          # placeholder — caller scales by actual risk
-    trail  = sl_d * trail_mult
-    cur_sl = sl
-    best   = entry
-    be     = False
+    trail    = sl_d * trail_mult
+    cur_sl   = sl
+    best     = entry
+    be       = False
+    partial_done = False
+    locked_r = 0.0    # R locked in from partial close
+    size     = 1.0    # remaining position size (halved after partial)
 
     bars = df.iloc[entry_pos+1 : entry_pos+1+max_bars]
     last_price = entry
 
     for _, b in bars.iterrows():
         last_price = b['close']
-        if direction == 1:                    # BUY
-            if b['low'] <= cur_sl:            # adverse — exit at SL/trail
-                return (cur_sl - entry) / sl_d
+        if direction == 1:                          # BUY
+            if b['low'] <= cur_sl:
+                return locked_r + (cur_sl - entry) / sl_d * size
             best = max(best, b['high'])
             if not be and best >= entry + sl_d:
-                be = True; cur_sl = entry     # breakeven
+                be = True; cur_sl = entry
             if be:
                 ns = best - trail
                 if ns > cur_sl: cur_sl = ns
-        else:                                 # SELL
+            if PARTIAL_R and not partial_done and best >= entry + PARTIAL_R * sl_d:
+                locked_r     = PARTIAL_R * 0.5     # lock in PARTIAL_R R on 50%
+                partial_done = True
+                size         = 0.5
+        else:                                       # SELL
             if b['high'] >= cur_sl:
-                return (entry - cur_sl) / sl_d
+                return locked_r + (entry - cur_sl) / sl_d * size
             best = min(best, b['low'])
             if not be and best <= entry - sl_d:
                 be = True; cur_sl = entry
             if be:
                 ns = best + trail
                 if ns < cur_sl: cur_sl = ns
+            if PARTIAL_R and not partial_done and best <= entry - PARTIAL_R * sl_d:
+                locked_r     = PARTIAL_R * 0.5
+                partial_done = True
+                size         = 0.5
 
-    # Max hold — exit at last close
     pts = (last_price - entry) if direction == 1 else (entry - last_price)
-    return pts / sl_d
+    return locked_r + pts / sl_d * size
 
 def make_trade(df, entry_pos, direction, entry, sl, trail_mult, risk_pct, cost_r=0.0):
     """Returns £P&L for a single trade, after deducting spread + slippage."""
@@ -521,36 +533,36 @@ def run_h4(key, tag, hs, he):
             trades.append(make_trade(df1,p,-1,b['close'],b['close']+1.5*a4,TRAIL_H4,risk,cost))
     return trades
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    W = 65
-    print("\n" + "="*W)
-    print("  11botV3 Full System Backtest — 2-Year H1 Data")
-    print("="*W)
-    print(f"\n  {'Strategy':<22} {'Tr':>4}  {'WR%':>5}  {'T/mo':>4}  "
-          f"{'PF':>6}  {'£/mo':>7}  {'OK?'}")
-    print("  " + "─"*(W-2))
-
+# ── Strategy runner ───────────────────────────────────────────────────────────
+def run_portfolio(print_table=True):
+    """Run all strategies, return combined stats dict. Uses global PARTIAL_R."""
+    global results
     results = []
+    W = 65
 
     def r(tag, trades):
         s = stats(tag, trades)
         if s: results.append(s)
 
-    print("\n── London Breakout ──────────────────────────────────────────────")
+    if print_table:
+        print(f"\n  {'Strategy':<22} {'Tr':>4}  {'WR%':>5}  {'T/mo':>4}  "
+              f"{'PF':>6}  {'£/mo':>7}  {'OK?'}")
+        print("  " + "─"*(W-2))
+
+    if print_table: print("\n── London Breakout ──────────────────────────────────────────────")
     r('LB_EUR',  run_lb('EURUSD','LB_EUR', skip_dow={1}))
     r('LB_GBP',  run_lb('GBPUSD','LB_GBP', skip_dow={1}))
 
-    print("\n── ORBs ─────────────────────────────────────────────────────────")
+    if print_table: print("\n── ORBs ─────────────────────────────────────────────────────────")
     r('DAX_ORB', run_orb('DAX',   'DAX_ORB', 8, 9, 12,  30,  300,  set()))
     r('NAS_ORB', run_orb('NAS100','NAS_ORB',13,14, 16,  50, 1500, {0}))
     r('SP5_ORB', run_orb('SP500', 'SP5_ORB',13,14, 16,   5,  300, {0}))
     r('NG_ORB',  run_orb('NATGAS','NG_ORB', 13,14, 16,0.03,  1.0,  set()))
 
-    print("\n── NatGas H1 EMA ────────────────────────────────────────────────")
+    if print_table: print("\n── NatGas H1 EMA ────────────────────────────────────────────────")
     r('NG_H1',   run_ng_h1('NG_H1'))
 
-    print("\n── PDH/PDL Breakout ─────────────────────────────────────────────")
+    if print_table: print("\n── PDH/PDL Breakout ─────────────────────────────────────────────")
     r('PDH_DAX',    run_pdh('DAX',   'PDH_DAX',    8, 17))
     r('PDH_UK100',  run_pdh('UK100', 'PDH_UK100',  8, 17))
     r('PDH_GBPJPY', run_pdh('GBPJPY','PDH_GBPJPY', 7, 17))
@@ -558,26 +570,26 @@ if __name__ == '__main__':
     r('PDH_SP5',    run_pdh('SP500', 'PDH_SP5',   14, 21))
     r('PDH_NG',     run_pdh('NATGAS','PDH_NG',    14, 21))
 
-    print("\n── PWH/PWL Breakout ─────────────────────────────────────────────")
+    if print_table: print("\n── PWH/PWL Breakout ─────────────────────────────────────────────")
     r('PWH_DAX',   run_pwh('DAX',   'PWH_DAX',    8, 17))
     r('PWH_UK100', run_pwh('UK100', 'PWH_UK100',  8, 17))
     r('PWH_NAS',   run_pwh('NAS100','PWH_NAS',   14, 21))
     r('PWH_SP5',   run_pwh('SP500', 'PWH_SP5',   14, 21))
 
-    print("\n── AMD Manipulation Reversal ────────────────────────────────────")
+    if print_table: print("\n── AMD Manipulation Reversal ────────────────────────────────────")
     r('AMD_EUR', run_amd('EURUSD','AMD_EUR', 7,  9, asian_hrs=(22,7)))
     r('AMD_GBP', run_amd('GBPUSD','AMD_GBP', 7,  9, asian_hrs=(22,7)))
     r('AMD_NAS', run_amd('NAS100','AMD_NAS',14, 16, asian_hrs=(12,14)))
 
-    print("\n── Liquidity Sweep Reversal ─────────────────────────────────────")
+    if print_table: print("\n── Liquidity Sweep Reversal ─────────────────────────────────────")
     r('LSR_UK100', run_lsr('UK100', 'LSR_UK100',  8, 17))
     r('LSR_NAS',   run_lsr('NAS100','LSR_NAS',   14, 21))
     r('LSR_EUR',   run_lsr('EURUSD','LSR_EUR',    7, 17))
 
-    print("\n── Fair Value Gap ───────────────────────────────────────────────")
+    if print_table: print("\n── Fair Value Gap ───────────────────────────────────────────────")
     r('FVG_EUR', run_fvg('EURUSD','FVG_EUR', 7, 17))
 
-    print("\n── H4 EMA Trend ─────────────────────────────────────────────────")
+    if print_table: print("\n── H4 EMA Trend ─────────────────────────────────────────────────")
     r('H4_DAX',    run_h4('DAX',   'H4_DAX',    8, 16))
     r('H4_UK100',  run_h4('UK100', 'H4_UK100',  8, 16))
     r('H4_EURCHF', run_h4('EURCHF','H4_EURCHF', 8, 17))
@@ -587,46 +599,81 @@ if __name__ == '__main__':
     r('H4_GBPUSD', run_h4('GBPUSD','H4_GBPUSD', 7, 17))
     r('H4_EURJPY', run_h4('EURJPY','H4_EURJPY', 7, 17))
 
-    print("\n── Donchian 20-Day Breakout ─────────────────────────────────────")
+    if print_table: print("\n── Donchian 20-Day Breakout ─────────────────────────────────────")
     r('DCH_DAX',   run_donchian('DAX',   'DCH_DAX',    8, 17))
     r('DCH_UK100', run_donchian('UK100', 'DCH_UK100',  8, 17))
     r('DCH_NAS',   run_donchian('NAS100','DCH_NAS',   14, 21))
     r('DCH_GOLD',  run_donchian('GOLD',  'DCH_GOLD',   8, 20))
 
-    print("\n── Gold LSR ─────────────────────────────────────────────────────")
+    if print_table: print("\n── Gold LSR ─────────────────────────────────────────────────────")
     r('LSR_GOLD',  run_lsr('GOLD', 'LSR_GOLD', 8, 20))
 
-    # ── Combined portfolio ───────────────────────────────────────────────────
     all_pnls = []
-    for res in results:
-        all_pnls.extend(res['trades'])
+    for res in results: all_pnls.extend(res['trades'])
     arr  = np.array(all_pnls, dtype=float)
-    wins = arr[arr >  5]; loss = arr[arr < -5]
-    n    = len(arr)
-    wr   = len(wins)/n*100
-    pf   = wins.sum()/abs(loss.sum()) if len(loss) else 0
-    days = 504
-    tpm  = n/days*21
-    mo   = arr.sum()/days*21
+    wins = arr[arr > 5]; loss = arr[arr < -5]
+    n    = len(arr); days = 504
+    avg_w = wins.mean() if len(wins) else 0
+    avg_l = abs(loss.mean()) if len(loss) else 0
+    return {
+        'n': n, 'wr': len(wins)/n*100,
+        'pf': wins.sum()/abs(loss.sum()) if len(loss) else 0,
+        'mo': arr.sum()/days*21,
+        'total': arr.sum(),
+        'avg_w': avg_w, 'avg_l': avg_l,
+        'results': results,
+    }
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    W = 65
+
+    # ── Run 1: no partial close ──────────────────────────────────────────────
+    PARTIAL_R = None
+    print("\n" + "="*W)
+    print("  11botV3 Backtest — NO PARTIAL CLOSE (trail only)")
+    print("="*W)
+    s1 = run_portfolio(print_table=True)
 
     print("\n" + "="*W)
-    print("  COMBINED PORTFOLIO SUMMARY")
+    print("  SUMMARY — No Partial Close")
     print("="*W)
-    print(f"\n  Total trades:    {n}")
-    print(f"  Win rate:        {wr:.1f}%")
-    print(f"  Trades/month:    {tpm:.1f}")
-    print(f"  Profit factor:   {pf:.2f}")
-    print(f"  Monthly avg P&L: £{mo:,.0f}")
-    print(f"  2-year total:    £{arr.sum():,.0f}")
+    print(f"  Trades: {s1['n']}  |  WR: {s1['wr']:.1f}%  |  PF: {s1['pf']:.2f}")
+    print(f"  Avg win: £{s1['avg_w']:,.0f}  |  Avg loss: £{s1['avg_l']:,.0f}  "
+          f"|  Ratio: {s1['avg_w']/s1['avg_l']:.2f}R" if s1['avg_l'] else "")
+    print(f"  Monthly: £{s1['mo']:,.0f}  |  2yr total: £{s1['total']:,.0f}")
 
-    strong = sorted([x for x in results if x['pf']>=1.5], key=lambda x:-x['pf'])
-    weak   = [x for x in results if x['pf']<1.2]
+    # ── Run 2: partial close at 1R ───────────────────────────────────────────
+    PARTIAL_R = 1.0
+    _cache.clear()   # clear data cache so sim re-runs with new PARTIAL_R
+    print("\n" + "="*W)
+    print("  11botV3 Backtest — PARTIAL CLOSE AT 1R (50% locked, 50% trails)")
+    print("="*W)
+    s2 = run_portfolio(print_table=False)  # skip per-strategy table, just summary
 
-    print(f"\n  ✅ STRONG (PF≥1.5):")
-    for x in strong:
-        print(f"     {x['name']:<18} PF {x['pf']:.2f}  £{x['mo']:,.0f}/mo")
-    if weak:
-        print(f"\n  ❌ WEAK (PF<1.2) — consider removing:")
-        for x in weak:
-            print(f"     {x['name']:<18} PF {x['pf']:.2f}  £{x['mo']:,.0f}/mo")
+    print("\n" + "="*W)
+    print("  SUMMARY — Partial Close at 1R")
+    print("="*W)
+    print(f"  Trades: {s2['n']}  |  WR: {s2['wr']:.1f}%  |  PF: {s2['pf']:.2f}")
+    print(f"  Avg win: £{s2['avg_w']:,.0f}  |  Avg loss: £{s2['avg_l']:,.0f}  "
+          f"|  Ratio: {s2['avg_w']/s2['avg_l']:.2f}R" if s2['avg_l'] else "")
+    print(f"  Monthly: £{s2['mo']:,.0f}  |  2yr total: £{s2['total']:,.0f}")
+
+    # ── Comparison ───────────────────────────────────────────────────────────
+    print("\n" + "="*W)
+    print("  PARTIAL CLOSE COMPARISON")
+    print("="*W)
+    print(f"\n  {'Metric':<20} {'No Partial':>12} {'Partial 1R':>12} {'Change':>10}")
+    print("  " + "─"*56)
+    print(f"  {'Profit Factor':<20} {s1['pf']:>12.2f} {s2['pf']:>12.2f} "
+          f"  {s2['pf']-s1['pf']:+.2f}")
+    print(f"  {'Win Rate':<20} {s1['wr']:>11.1f}% {s2['wr']:>11.1f}%")
+    print(f"  {'Avg Win (£)':<20} {s1['avg_w']:>12,.0f} {s2['avg_w']:>12,.0f} "
+          f"  {s2['avg_w']-s1['avg_w']:+,.0f}")
+    print(f"  {'Avg Loss (£)':<20} {s1['avg_l']:>12,.0f} {s2['avg_l']:>12,.0f} "
+          f"  {s2['avg_l']-s1['avg_l']:+,.0f}")
+    print(f"  {'Monthly P&L (£)':<20} {s1['mo']:>12,.0f} {s2['mo']:>12,.0f} "
+          f"  {s2['mo']-s1['mo']:+,.0f}")
+    print(f"  {'2yr Total (£)':<20} {s1['total']:>12,.0f} {s2['total']:>12,.0f} "
+          f"  {s2['total']-s1['total']:+,.0f}")
     print()
