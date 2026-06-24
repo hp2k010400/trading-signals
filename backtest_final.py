@@ -482,7 +482,7 @@ if __name__ == '__main__':
     W = 65
     print("\n" + "="*W)
     print("  11botV3 v5.00 — DEFINITIVE FINAL BACKTEST")
-    print("  36 strategies | PDH_UK100 removed | D1 bias on PDH_DAX+SP5")
+    print("  34 strategies | PWH_UK100 + LSR_UK100 removed | D1 bias on PDH_DAX+SP5")
     print("  HasPosition simulated | Slippage included")
     print("="*W)
     print("\nLoading data (this takes ~2 mins)...")
@@ -490,7 +490,7 @@ if __name__ == '__main__':
 
     all_signals = []
 
-    print("\nRunning all 36 strategies...")
+    print("\nRunning all 34 strategies (PWH_UK100 + LSR_UK100 removed)...")
 
     # London Breakout
     all_signals += run_lb('EURUSD','LB_EUR', skip_dow={1})
@@ -507,17 +507,15 @@ if __name__ == '__main__':
     all_signals += run_pdh('NAS100','PDH_NAS',   14,21)
     all_signals += run_pdh('SP500', 'PDH_SP5',   14,21, use_bias=True)
     all_signals += run_pdh('NATGAS','PDH_NG',    14,21)
-    # PWH
+    # PWH (UK100 removed — bull market SELL signals losing too much)
     all_signals += run_pwh('DAX',   'PWH_DAX',   8,17)
-    all_signals += run_pwh('UK100', 'PWH_UK100', 8,17)
     all_signals += run_pwh('NAS100','PWH_NAS',  14,21)
     all_signals += run_pwh('SP500', 'PWH_SP5',  14,21)
     # AMD
     all_signals += run_amd('EURUSD','AMD_EUR', 7, 9, asian_hrs=(22,7))
     all_signals += run_amd('GBPUSD','AMD_GBP', 7, 9, asian_hrs=(22,7))
     all_signals += run_amd('NAS100','AMD_NAS',14,16, asian_hrs=(12,14))
-    # LSR
-    all_signals += run_lsr('UK100', 'LSR_UK100',  8,17)
+    # LSR (UK100 removed — bull market SELL signals losing too much)
     all_signals += run_lsr('NAS100','LSR_NAS',   14,21)
     all_signals += run_lsr('EURUSD','LSR_EUR',    7,17)
     all_signals += run_lsr('GOLD',  'LSR_GOLD',   8,20)
