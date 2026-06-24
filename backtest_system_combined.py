@@ -199,9 +199,60 @@ def sim(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
     pts = (last_price - entry) if direction == 1 else (entry - last_price)
     return locked_r + pts / sl_d * size
 
+def sim_live(df, entry_pos, direction, entry, sl, trail_mult, max_bars=48):
+    """
+    Simulate ACTUAL live EA trail behaviour: trail starts as soon as
+    best - trail > entry (i.e. from ~trail_mult*R onward), not after 1R BE.
+    BE still moves SL to entry at 1R — same as live ManageTrails.
+    """
+    sl_d = abs(entry - sl)
+    if sl_d <= 0: return 0.0
+    if trail_mult <= 0:
+        bars = df.iloc[entry_pos+1 : entry_pos+1+max_bars]
+        last_price = entry
+        for _, b in bars.iterrows():
+            last_price = b['close']
+            if direction == 1 and b['low']  <= sl: return (sl   - entry) / sl_d
+            if direction ==-1 and b['high'] >= sl: return (entry - sl)   / sl_d
+        pts = (last_price - entry) if direction == 1 else (entry - last_price)
+        return pts / sl_d
+
+    trail   = sl_d * trail_mult
+    cur_sl  = sl
+    best    = entry
+    bars    = df.iloc[entry_pos+1 : entry_pos+1+max_bars]
+    last_price = entry
+
+    for _, b in bars.iterrows():
+        last_price = b['close']
+        if direction == 1:
+            if b['low'] <= cur_sl:
+                return (cur_sl - entry) / sl_d
+            best = max(best, b['high'])
+            if cur_sl < entry and best >= entry + sl_d:   # BE at 1R
+                cur_sl = entry
+            ns = best - trail                              # trail from ~trail_mult*R
+            if ns > cur_sl and ns > entry:
+                cur_sl = ns
+        else:
+            if b['high'] >= cur_sl:
+                return (entry - cur_sl) / sl_d
+            best = min(best, b['low'])
+            if cur_sl > entry and best <= entry - sl_d:   # BE at 1R
+                cur_sl = entry
+            ns = best + trail
+            if ns < cur_sl and ns < entry:
+                cur_sl = ns
+
+    pts = (last_price - entry) if direction == 1 else (entry - last_price)
+    return pts / sl_d
+
+_use_live_sim = False   # toggled in comparison section
+
 def make_trade(df, entry_pos, direction, entry, sl, trail_mult, risk_pct, cost_r=0.0):
     """Returns £P&L for a single trade, after deducting spread + slippage."""
-    r_ratio = sim(df, entry_pos, direction, entry, sl, trail_mult)
+    fn = sim_live if _use_live_sim else sim
+    r_ratio = fn(df, entry_pos, direction, entry, sl, trail_mult)
     r_ratio -= cost_r
     return r_ratio * risk_pct * ACCOUNT
 
@@ -702,6 +753,35 @@ if __name__ == '__main__':
     verdict = "✅ EDGE HOLDS" if sy2['pf'] >= sy1['pf']*0.8 else "⚠️  DEGRADED — possible overfitting"
     print(f"\n  Year 2 PF is {sy2['pf']/sy1['pf']*100:.0f}% of Year 1 PF  →  {verdict}")
 
+    # ── Live sim vs backtest comparison (runs first — fast) ─────────────────
+    global _use_live_sim
+    print("\n" + "="*W)
+    print("  TRAIL MODE COMPARISON")
+    print("  Backtest = trail only after 1R BE  |  Live sim = trail from ~trail×R start")
+    print("="*W)
+    print(f"\n  {'Mode':<24}  {'ORB':>4}  {'WR%':>6}  {'PF':>6}  {'Avg W':>7}  {'Avg L':>7}  {'£/mo':>8}")
+    print("  " + "─"*68)
+    for label, use_live, orb, h4, dch in [
+        ("Backtest (after 1R BE)", False, 0.1, 0.15, 0.20),
+        ("Backtest (after 1R BE)", False, 0.2, 0.30, 0.40),
+        ("Backtest (after 1R BE)", False, 0.3, 0.45, 0.60),
+        ("Live sim (from start) ", True,  0.1, 0.15, 0.20),
+        ("Live sim (from start) ", True,  0.2, 0.30, 0.40),
+        ("Live sim (from start) ", True,  0.3, 0.45, 0.60),
+        ("Live sim (from start) ", True,  0.5, 0.75, 1.00),
+    ]:
+        TRAIL_ORB = orb; TRAIL_H4 = h4; TRAIL_DCH = dch
+        BT_FROM = None; BT_TO = None
+        _use_live_sim = use_live
+        st = run_portfolio(print_table=False)
+        tag = "  ← current EA" if use_live and abs(orb-0.1)<0.01 else ""
+        print(f"  {label}  {orb:.1f}R  {st['wr']:>5.1f}%  {st['pf']:>6.2f}  "
+              f"£{st['avg_w']:>6,.0f}  £{st['avg_l']:>6,.0f}  £{st['mo']:>7,.0f}{tag}")
+    _use_live_sim = False
+    TRAIL_ORB = 0.10; TRAIL_H4 = 0.15; TRAIL_DCH = 0.20
+    print(f"\n  Fix EA trail to start only after 1R BE → matches Backtest row above")
+    print()
+
     # ── Trail multiplier sweep ───────────────────────────────────────────────
     # ORB trail is swept; H4 = ORB*1.5, DCH = ORB*2.0 (keep proportions)
     SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
@@ -738,4 +818,4 @@ if __name__ == '__main__':
 
     # Restore
     TRAIL_ORB = 0.20; TRAIL_H4 = 0.30; TRAIL_DCH = 0.40
-    print()
+

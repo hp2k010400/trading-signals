@@ -139,6 +139,10 @@ bool dch_dax_fired, dch_nas_fired;
 bool lsr_gold_fired;
 //--- Overnight BE
 bool g_overnight_be_done;
+//--- Instrument loss cooldown (SL hit today → block all strategies on that instrument)
+bool inst_loss_nas, inst_loss_sp5, inst_loss_dax, inst_loss_gbpusd,
+     inst_loss_eurusd, inst_loss_gbpjpy, inst_loss_natgas, inst_loss_gold,
+     inst_loss_uk100, inst_loss_eurjpy, inst_loss_usdchf;
 
 datetime last_reset = 0;
 
@@ -151,12 +155,73 @@ TrailData g_trails[300];
 int       g_trail_n = 0;
 
 //+------------------------------------------------------------------+
+void SetFiredFromTag(string comment)
+{
+   string tag = comment;
+   if(StringLen(tag) >= 2)
+   {
+      string suf = StringSubstr(tag, StringLen(tag)-2);
+      if(suf == "_B" || suf == "_S")
+         tag = StringSubstr(tag, 0, StringLen(tag)-2);
+   }
+   if(tag=="LB_EUR")    { lb_eur_fired=true;    return; }
+   if(tag=="LB_GBP")    { lb_gbp_fired=true;    return; }
+   if(tag=="DAX_ORB")   { dax_orb_fired=true;   return; }
+   if(tag=="NAS")       { nas_fired=true;        return; }
+   if(tag=="SP5")       { sp5_fired=true;        return; }
+   if(tag=="NG")        { ng_fired=true;         return; }
+   if(tag=="NG_H1")     { ng_h1_fired=true;      return; }
+   if(tag=="PDH_DAX")   { pdh_dax_fired=true;    return; }
+   if(tag=="PDH_NAS")   { pdh_nas_fired=true;    return; }
+   if(tag=="PDH_SP5")   { pdh_sp5_fired=true;    return; }
+   if(tag=="PDH_GBPJPY"){ pdh_gbpjpy_fired=true; return; }
+   if(tag=="PWH_UK100") { pwh_uk100_fired=true;  return; }
+   if(tag=="PWH_NAS")   { pwh_nas_fired=true;    return; }
+   if(tag=="AMD_EUR")   { amd_eur_fired=true;    return; }
+   if(tag=="AMD_GBP")   { amd_gbp_fired=true;    return; }
+   if(tag=="AMD_NAS")   { amd_nas_fired=true;    return; }
+   if(tag=="LSR_UK100") { lsr_uk100_fired=true;  return; }
+   if(tag=="LSR_NAS")   { lsr_nas_fired=true;    return; }
+   if(tag=="LSR_EUR")   { lsr_eur_fired=true;    return; }
+   if(tag=="LSR_GOLD")  { lsr_gold_fired=true;   return; }
+   if(tag=="FVG_EUR")   { fvg_eur_fired=true;    return; }
+   if(tag=="H4_DAX")    { h4_dax_fired=true;     return; }
+   if(tag=="H4_UK100")  { h4_uk100_fired=true;   return; }
+   if(tag=="H4_GBPJPY") { h4_gbpjpy_fired=true;  return; }
+   if(tag=="H4_USDCHF") { h4_usdchf_fired=true;  return; }
+   if(tag=="H4_EURUSD") { h4_eurusd_fired=true;  return; }
+   if(tag=="H4_GBPUSD") { h4_gbpusd_fired=true;  return; }
+   if(tag=="H4_EURJPY") { h4_eurjpy_fired=true;  return; }
+   if(tag=="DCH_DAX")   { dch_dax_fired=true;    return; }
+   if(tag=="DCH_NAS")   { dch_nas_fired=true;    return; }
+}
+
+void RestoreFiredFlags()
+{
+   datetime day_start = StringToTime(TimeToString(TimeGMT(), TIME_DATE));
+   HistorySelect(day_start, TimeGMT());
+   for(int i = HistoryDealsTotal()-1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != Magic) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_IN) continue;
+      SetFiredFromTag(HistoryDealGetString(ticket, DEAL_COMMENT));
+   }
+   for(int i = PositionsTotal()-1; i >= 0; i--)
+   {
+      if(!pos.SelectByIndex(i) || pos.Magic() != Magic) continue;
+      SetFiredFromTag(pos.Comment());
+   }
+}
+
+//+------------------------------------------------------------------+
 int OnInit()
 {
    trade.SetExpertMagicNumber(Magic);
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   RestoreFiredFlags();
    Print("11botV3 started — 34 strategies | Circuit breaker: ",
          Max_Daily_Loss, "% daily loss limit");
    return INIT_SUCCEEDED;
@@ -170,6 +235,7 @@ void OnTimer()
    ResetDaily();
    ManageTrails();
    CheckOvernightBE();
+   CheckSLHits();
    if(DailyLossExceeded()) return;
    if(IsNearHighImpactNews()) return;
 
@@ -261,6 +327,10 @@ void ResetDaily()
    dch_dax_fired = dch_nas_fired = false;
    lsr_gold_fired = false;
    g_overnight_be_done = false;
+   inst_loss_nas = inst_loss_sp5 = inst_loss_dax = false;
+   inst_loss_gbpusd = inst_loss_eurusd = inst_loss_gbpjpy = false;
+   inst_loss_natgas = inst_loss_gold = inst_loss_uk100 = false;
+   inst_loss_eurjpy = inst_loss_usdchf = false;
 
    last_reset        = today;
    g_day_open_equity = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -337,6 +407,40 @@ bool IsNearHighImpactNews()
    return false;
 }
 
+bool &InstLossFlag(string sym)
+{
+   if(sym==Sym_NAS100) return inst_loss_nas;
+   if(sym==Sym_SP500)  return inst_loss_sp5;
+   if(sym==Sym_DAX)    return inst_loss_dax;
+   if(sym==Sym_GBPUSD) return inst_loss_gbpusd;
+   if(sym==Sym_EURUSD) return inst_loss_eurusd;
+   if(sym==Sym_GBPJPY) return inst_loss_gbpjpy;
+   if(sym==Sym_NATGAS) return inst_loss_natgas;
+   if(sym==Sym_GOLD)   return inst_loss_gold;
+   if(sym==Sym_UK100)  return inst_loss_uk100;
+   if(sym==Sym_EURJPY) return inst_loss_eurjpy;
+   if(sym==Sym_USDCHF) return inst_loss_usdchf;
+   return inst_loss_nas;
+}
+
+bool InstBlocked(string sym) { return InstLossFlag(sym); }
+
+void CheckSLHits()
+{
+   datetime day_start = StringToTime(TimeToString(TimeGMT(), TIME_DATE));
+   HistorySelect(day_start, TimeGMT());
+   for(int i = HistoryDealsTotal()-1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(HistoryDealGetInteger(ticket, DEAL_MAGIC) != Magic) continue;
+      if(HistoryDealGetInteger(ticket, DEAL_ENTRY) != DEAL_ENTRY_OUT) continue;
+      double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+      if(profit >= -5.0) continue;
+      string sym = HistoryDealGetString(ticket, DEAL_SYMBOL);
+      InstLossFlag(sym) = true;
+   }
+}
+
 void CheckOvernightBE()
 {
    if(UTCHour() != 21 || g_overnight_be_done) return;
@@ -357,6 +461,8 @@ void CheckOvernightBE()
 
 void DoBuy(string sym, double sl, double risk_pct, string tag)
 {
+   if(InstBlocked(sym))
+      { Print("BUY SKIP ", sym, " — instrument loss cooldown [", tag, "]"); return; }
    if(TotalOpenRisk() + risk_pct > Max_Concurrent_Risk)
       { Print("BUY SKIP ", sym, " — concurrent risk cap [", tag, "]"); return; }
    SymbolSelect(sym, true);
@@ -374,6 +480,8 @@ void DoBuy(string sym, double sl, double risk_pct, string tag)
 
 void DoSell(string sym, double sl, double risk_pct, string tag)
 {
+   if(InstBlocked(sym))
+      { Print("SELL SKIP ", sym, " — instrument loss cooldown [", tag, "]"); return; }
    if(TotalOpenRisk() + risk_pct > Max_Concurrent_Risk)
       { Print("SELL SKIP ", sym, " — concurrent risk cap [", tag, "]"); return; }
    SymbolSelect(sym, true);
@@ -475,8 +583,11 @@ void ManageTrails()
          double best=GetBest(ticket,entry);
          if(bid>best){best=bid;SetBest(ticket,best,sld);}
          if(best>=entry+eff_sld&&sl_cur<entry-pt) trade.PositionModify(sym,entry,0);
-         double ns=best-trail;
-         if(ns>sl_cur+pt&&ns>entry) trade.PositionModify(sym,ns,0);
+         if(sl_cur>=entry-pt)   // only trail once BE is active
+         {
+            double ns=best-trail;
+            if(ns>sl_cur+pt) trade.PositionModify(sym,ns,0);
+         }
       }
       else
       {
@@ -484,8 +595,11 @@ void ManageTrails()
          double best=GetBest(ticket,entry);
          if(ask<best){best=ask;SetBest(ticket,best,sld);}
          if(best<=entry-eff_sld&&sl_cur>entry+pt) trade.PositionModify(sym,entry,0);
-         double ns=best+trail;
-         if(ns<sl_cur-pt&&ns<entry) trade.PositionModify(sym,ns,0);
+         if(sl_cur<=entry+pt)   // only trail once BE is active
+         {
+            double ns=best+trail;
+            if(ns<sl_cur-pt) trade.PositionModify(sym,ns,0);
+         }
       }
    }
 }
@@ -738,7 +852,8 @@ void CheckH4(string sym, double risk, int s_start, int s_end,
 {
    int h=UTCHour();
    bool in_sess=(s_start<=s_end)?(h>=s_start&&h<s_end):(h>=s_start||h<s_end);
-   if(!in_sess||fired||HasPosition(sym)) return;
+   if(!in_sess||fired) return;
+   if(HasPosition(sym)) { Print("H4 BLOCKED by HasPosition: ", sym, " [", tag, "]"); return; }
    int h10=iMA(sym,PERIOD_H4,10,0,MODE_EMA,PRICE_CLOSE);
    int h20=iMA(sym,PERIOD_H4,20,0,MODE_EMA,PRICE_CLOSE);
    int ha=iATR(sym,PERIOD_H4,14);
@@ -764,7 +879,8 @@ void CheckDonchian(string sym, double risk, int s_start, int s_end,
 {
    int h=UTCHour();
    bool in_sess=(s_start<=s_end)?(h>=s_start&&h<s_end):(h>=s_start||h<s_end);
-   if(!in_sess||fired||HasPosition(sym)) return;
+   if(!in_sess||fired) return;
+   if(HasPosition(sym)) { Print("DCH BLOCKED by HasPosition: ", sym, " [", tag, "]"); return; }
    double hi20[20], lo20[20];
    ArraySetAsSeries(hi20,true); ArraySetAsSeries(lo20,true);
    if(CopyHigh(sym,PERIOD_D1,1,20,hi20)<20) return;
