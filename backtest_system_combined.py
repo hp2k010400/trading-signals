@@ -704,7 +704,6 @@ if __name__ == '__main__':
 
     # ── Trail multiplier sweep ───────────────────────────────────────────────
     # ORB trail is swept; H4 = ORB*1.5, DCH = ORB*2.0 (keep proportions)
-    global TRAIL_ORB, TRAIL_H4, TRAIL_DCH
     SWEEP = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0]
 
     print("\n" + "="*W)
