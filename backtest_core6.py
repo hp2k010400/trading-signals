@@ -428,6 +428,39 @@ if __name__ == '__main__':
                '❌ DEGRADED (<60%)')
     print(f"\n  OOS/IS PF ratio: {ratio:.0f}%  →  {verdict}")
 
+    # ── D2. Rolling walk-forward (multiple split dates) ───────────────────────
+    COST_SCALE = 1.5
+    print(f"\n{'='*W}")
+    print("  D2. ROLLING WALK-FORWARD  (6 different split dates, 1.5× costs)")
+    print("  If OOS PF stays >1.3 across ALL splits, the edge is structural.")
+    print(f"{'='*W}")
+    print(f"\n  {'Split date':<14}  {'IS trades':>9}  {'IS PF':>6}  "
+          f"{'OOS trades':>10}  {'OOS PF':>7}  {'Ratio':>6}  {'Hold?'}")
+    print("  " + "─"*(W-2))
+
+    split_dates = [
+        '2024-07-01', '2024-10-01', '2025-01-01',
+        '2025-04-01', '2025-07-01', '2025-10-01',
+    ]
+    all_pass = True
+    for sd in split_dates:
+        sp = pd.Timestamp(sd, tz='UTC')
+        pi = stats(get_pnls(date_to=sp))
+        po = stats(get_pnls(date_from=sp))
+        if not pi or not po or pi['n'] < 50 or po['n'] < 50:
+            print(f"  {sd:<14}  (insufficient data)")
+            continue
+        r   = po['pf'] / pi['pf'] * 100 if pi['pf'] > 0 else 0
+        ok  = ('✅' if po['pf'] >= 1.3 else ('⚠ ' if po['pf'] >= 1.1 else '❌'))
+        if po['pf'] < 1.3: all_pass = False
+        print(f"  {sd:<14}  {pi['n']:>9,}  {pi['pf']:>6.2f}  "
+              f"{po['n']:>10,}  {po['pf']:>7.2f}  {r:>5.0f}%  {ok}")
+
+    conclusion = ("✅ Edge is consistent across all splits — structural"
+                  if all_pass else
+                  "⚠  Edge varies by period — some splits show weakness")
+    print(f"\n  → {conclusion}")
+
     # ── E. Monthly P&L chart ──────────────────────────────────────────────────
     print(f"\n{'='*W}")
     print("  E. MONTHLY P&L  (1.5× costs, all 6 strategies)")
