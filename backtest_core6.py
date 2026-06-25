@@ -263,43 +263,41 @@ def sharpe(pnls):
 
 # ── FTMO Monte Carlo ──────────────────────────────────────────────────────────
 def ftmo_monte_carlo(pnls, n_sim=10_000, phase1_target=7_000,
-                     daily_limit=3_500, total_limit=7_000, max_days=30):
+                     daily_limit=3_500, total_limit=7_000,
+                     max_days=None):
     """
-    Simulate n_sim random orderings of trades, grouped into calendar days.
-    Each simulation: draw `max_days` trading days of trades from historical distribution.
-    Returns: (pass_pct, bust_pct, timeout_pct)
+    Simulate n_sim random orderings of trades.
+    max_days=None → no time limit (run until bust or pass, cap at 500 days).
+    Returns: (pass_pct, bust_pct, still_running_pct)
     """
-    # Build per-day P&L list
     by_day = defaultdict(float)
     for d, _, p in pnls: by_day[d] += p
     daily_pnls = np.array(list(by_day.values()))
 
-    rng  = np.random.default_rng(42)
-    pass_count = bust_count = timeout_count = 0
+    cap      = max_days if max_days else 500   # safety cap
+    rng      = np.random.default_rng(42)
+    pass_count = bust_count = running_count = 0
 
     for _ in range(n_sim):
-        # Sample max_days days with replacement from historical daily P&Ls
-        sim_days = rng.choice(daily_pnls, size=max_days, replace=True)
-        equity   = ACCOUNT
-        peak     = ACCOUNT
-        passed   = False
-        busted   = False
+        equity = ACCOUNT
+        peak   = ACCOUNT
+        passed = busted = False
 
-        for day_pnl in sim_days:
-            if day_pnl < -daily_limit:   # hit daily loss limit
+        for day_pnl in rng.choice(daily_pnls, size=cap, replace=True):
+            if day_pnl < -daily_limit:
                 busted = True; break
             equity += day_pnl
             peak    = max(peak, equity)
-            if peak - equity > total_limit:  # hit total drawdown limit
+            if peak - equity > total_limit:
                 busted = True; break
             if equity - ACCOUNT >= phase1_target:
                 passed = True; break
 
-        if busted:     bust_count    += 1
-        elif passed:   pass_count    += 1
-        else:          timeout_count += 1
+        if   busted: bust_count    += 1
+        elif passed: pass_count    += 1
+        else:        running_count += 1
 
-    return (pass_count/n_sim*100, bust_count/n_sim*100, timeout_count/n_sim*100)
+    return (pass_count/n_sim*100, bust_count/n_sim*100, running_count/n_sim*100)
 
 # ── Text bar chart ────────────────────────────────────────────────────────────
 def bar_chart(monthly_dict, width=40):
@@ -446,56 +444,72 @@ if __name__ == '__main__':
     print(f"\n  Positive months: {pos_months}  |  Negative months: {neg_months}  "
           f"|  Hit rate: {pos_months/(pos_months+neg_months)*100:.0f}%")
 
-    # ── F. FTMO Phase 1 Monte Carlo ───────────────────────────────────────────
+    # ── F. Monthly distribution ───────────────────────────────────────────────
+    COST_SCALE = 1.5
     print(f"\n{'='*W}")
-    print("  F. FTMO PHASE 1 MONTE CARLO  (10,000 simulations, 1.5× costs)")
-    print("  Target: +£7,000 (10%) in ≤30 trading days")
-    print("  Limits: -£3,500 daily  |  -£7,000 total from peak")
+    print("  F. MONTHLY DISTRIBUTION  (variance explanation)")
     print(f"{'='*W}")
 
-    COST_SCALE = 1.5
-    p15 = get_pnls()
-    dd15, _ = max_drawdown(p15)
-    s15  = stats(p15)
-    sh15 = sharpe(p15)
-
-    pass_pct, bust_pct, timeout_pct = ftmo_monte_carlo(p15)
-
+    mo_arr = np.array(sorted(monthly.values()))
     print(f"""
-  Based on {s15['n']:,} historical trades at 1.5× costs:
-  Avg monthly P&L:  £{s15['mo']:,.0f}
-  Max drawdown:     £{dd15:,.0f}
-  Sharpe ratio:     {sh15}
+  Variance is a feature of breakout strategies, not a bug:
+  Most days are quiet (market stays inside ORB range, small SL or scratch).
+  A few times per month a big macro/news event drives a 200-400pt NAS move
+  and the trail rides it for £1,000-3,000+ in a single session.
+  This produces lumpy monthly returns — quiet months then monster months.
 
-  ┌─────────────────────────────────────────────┐
-  │  Phase 1 pass (hit +£7k before limits):  {pass_pct:>5.1f}%  │
-  │  Bust (hit daily or total loss limit):   {bust_pct:>5.1f}%  │
-  │  Timeout (30 days, neither):            {timeout_pct:>5.1f}%  │
-  └─────────────────────────────────────────────┘
+  Monthly stats (1.5x costs, {len(mo_arr)} months):
+    Median:           £{np.median(mo_arr):>8,.0f}
+    Average:          £{np.mean(mo_arr):>8,.0f}
+    Best month:       £{np.max(mo_arr):>8,.0f}
+    Worst month:      £{np.min(mo_arr):>8,.0f}
+    Std deviation:    £{np.std(mo_arr):>8,.0f}
+    Months above £0:  {sum(1 for v in mo_arr if v>0)/len(mo_arr)*100:.0f}%
+    Months above £3k: {sum(1 for v in mo_arr if v>3000)/len(mo_arr)*100:.0f}%
+    Months above £8k: {sum(1 for v in mo_arr if v>8000)/len(mo_arr)*100:.0f}%
 
-  Interpretation:
-    >50% pass rate  →  Strong case to pay £489 now
-    30-50% pass rate →  Reasonable bet, expect to need 2-3 attempts
-    <30% pass rate  →  System not ready for challenge yet
+  For FTMO with NO time limit: variance works FOR you.
+  You keep running until a strong period pushes past +£7,000.
+  Only risk is drawdown hitting -£7,000 from peak first.
 """)
 
-    # ── G. OOS-only FTMO (realistic forward estimate) ────────────────────────
+    # ── G. FTMO Monte Carlo — NO time limit ──────────────────────────────────
     print(f"{'='*W}")
-    print("  G. FTMO SIMULATION ON OOS DATA ONLY  (Jan 2025+, 1.5× costs)")
-    print("  This is the most honest estimate — no IS contamination")
+    print("  G. FTMO PHASE 1  —  NO TIME LIMIT  (10,000 sims, 1.5x costs)")
+    print("  Runs until +£7,000 profit  OR  daily/total loss limits hit")
     print(f"{'='*W}")
 
     COST_SCALE = 1.5
+    p15   = get_pnls()
+    dd15, _ = max_drawdown(p15)
+    s15   = stats(p15)
+    sh15  = sharpe(p15)
+    pass_f, bust_f, run_f = ftmo_monte_carlo(p15, max_days=None)
+
     p_oos = get_pnls(date_from=WF_SPLIT)
-    pass_oos, bust_oos, timeout_oos = ftmo_monte_carlo(p_oos)
     s_oos = stats(p_oos)
+    pass_o, bust_o, run_o = ftmo_monte_carlo(p_oos, max_days=None)
 
     print(f"""
-  OOS period trades: {s_oos['n']:,}  |  PF: {s_oos['pf']}  |  £/mo: £{s_oos['mo']:,}
+  Full data ({s15['n']:,} trades, PF {s15['pf']}, MaxDD £{dd15:,}):
+  ┌─────────────────────────────────────────────────┐
+  │  Pass (hit +£7k profit):        {pass_f:>5.1f}%          │
+  │  Bust (hit loss limit):          {bust_f:>5.1f}%          │
+  │  Still running at 500-day cap:   {run_f:>5.1f}%          │
+  │  Eventual pass rate:            {pass_f/(pass_f+bust_f)*100:>5.1f}%          │
+  └─────────────────────────────────────────────────┘
 
-  ┌─────────────────────────────────────────────┐
-  │  Phase 1 pass:   {pass_oos:>5.1f}%                       │
-  │  Bust:           {bust_oos:>5.1f}%                       │
-  │  Timeout:        {timeout_oos:>5.1f}%                       │
-  └─────────────────────────────────────────────┘
+  OOS only ({s_oos['n']:,} trades, PF {s_oos['pf']}) — most honest:
+  ┌─────────────────────────────────────────────────┐
+  │  Pass (hit +£7k profit):        {pass_o:>5.1f}%          │
+  │  Bust (hit loss limit):          {bust_o:>5.1f}%          │
+  │  Still running at 500-day cap:   {run_o:>5.1f}%          │
+  │  Eventual pass rate:            {pass_o/(pass_o+bust_o)*100:>5.1f}%          │
+  └─────────────────────────────────────────────────┘
+  Expected attempts needed: {1/(pass_o/(pass_o+bust_o)):.2f}
+
+  VERDICT:
+    >90% eventual pass rate  →  Pay £489. Expected to pass first attempt.
+    70-90%                   →  Pay, might need one retry.
+    <70%                     →  More live validation first.
 """)
