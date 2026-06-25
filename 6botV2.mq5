@@ -76,9 +76,13 @@ int OnInit()
 {
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
+   // Set last_reset to today BEFORE RestoreFiredFlags so ResetDaily()
+   // on first timer tick does not wipe the restored fired flags
+   g_last_reset = (datetime)(TimeGMT()/86400*86400);
    g_day_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    RestoreFiredFlags();
-   Print("6botV2 v2.01 online | Magic=",Magic," | Server_UTC=",Server_UTC);
+   CheckSLHits();
+   Print("6botV2 v2.03 online | Magic=",Magic," | Server_UTC=",Server_UTC);
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int r) { EventKillTimer(); }
@@ -290,6 +294,15 @@ double GetTrailOrigSld(ulong tk)
    for(int i=0;i<g_trail_n;i++) if(g_trails[i].ticket==tk) return g_trails[i].orig_sld;
    return 0;
 }
+double GetATR(string sym, int period=14)
+{
+   double buf[];
+   int h=iATR(sym,PERIOD_H1,period);
+   if(h==INVALID_HANDLE) return 0;
+   if(CopyBuffer(h,0,0,1,buf)<1){IndicatorRelease(h);return 0;}
+   IndicatorRelease(h);
+   return buf[0];
+}
 void CleanTrails()
 {
    int w=0;
@@ -316,6 +329,7 @@ void ManageTrails()
       double pt    =SymbolInfoDouble(sym,SYMBOL_POINT);
       double sld   =MathAbs(entry-sl_cur);
       double eff   =sld>0?sld:GetTrailOrigSld(tk);
+      if(eff<=0) eff=GetATR(sym)*1.5;   // fallback when SL=entry and orig lost on reload
       if(eff<=0) continue;
       double trail=eff*Trail_R;
 
