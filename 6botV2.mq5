@@ -14,7 +14,7 @@
 //|  Attach to ANY chart. Timer fires every 60 seconds.              |
 //+------------------------------------------------------------------+
 #property copyright "GC4C"
-#property version   "2.01"
+#property version   "2.04"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -74,15 +74,14 @@ int    g_trail_n = 0;
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   trade.SetExpertMagicNumber(Magic);
    trade.SetDeviationInPoints(20);
    EventSetTimer(60);
-   // Set last_reset to today BEFORE RestoreFiredFlags so ResetDaily()
-   // on first timer tick does not wipe the restored fired flags
    g_last_reset = (datetime)(TimeGMT()/86400*86400);
    g_day_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    RestoreFiredFlags();
    CheckSLHits();
-   Print("6botV2 v2.03 online | Magic=",Magic," | Server_UTC=",Server_UTC);
+   Print("6botV2 v2.04 online | Magic=",Magic," | Server_UTC=",Server_UTC);
    return INIT_SUCCEEDED;
 }
 void OnDeinit(const int r) { EventKillTimer(); }
@@ -329,7 +328,7 @@ void ManageTrails()
       double pt    =SymbolInfoDouble(sym,SYMBOL_POINT);
       double sld   =MathAbs(entry-sl_cur);
       double eff   =sld>0?sld:GetTrailOrigSld(tk);
-      if(eff<=0) eff=GetATR(sym)*1.5;   // fallback when SL=entry and orig lost on reload
+      if(eff<=0) eff=GetATR(sym)*1.5;
       if(eff<=0) continue;
       double trail=eff*Trail_R;
 
