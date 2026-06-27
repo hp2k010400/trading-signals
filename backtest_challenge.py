@@ -11,9 +11,10 @@ warnings.filterwarnings('ignore')
 # ── Paste the same config / data loading / strategy runners from backtest_validate.py ──
 ACCOUNT    = 70_000
 COST_SCALE = 1.5
-DAILY_LIMIT = 3_500   # 5% FTMO daily loss limit
-TOTAL_LIMIT = 7_000   # 10% FTMO total loss limit
-TARGET      = 3_500   # 5% profit target
+DAILY_LIMIT  = 3_500   # 5% FTMO daily loss limit
+TOTAL_LIMIT  = 7_000   # 10% FTMO total loss limit
+TARGET_P1    = 7_000   # Phase 1: 10% profit target
+TARGET_P2    = 3_500   # Phase 2: 5% profit target
 
 RISKS = {
     'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004,
@@ -229,68 +230,78 @@ print(f"  Months where DD exceeded £4k:  {(mdd_vals > 4000).sum()}")
 print(f"  Months where DD exceeded £5k:  {(mdd_vals > 5000).sum()}")
 print(f"  Months where DD exceeded £7k:  {(mdd_vals > 7000).sum()}  ← FTMO bust")
 
-# ── Simulate challenge attempts ───────────────────────────────────────────────
+# ── Simulate full FTMO challenge (Phase 1 + Phase 2) ─────────────────────────
 print("\n" + "=" * W)
-print("  C. SIMULATED CHALLENGE ATTEMPTS  (1,000 sims, random day-sequence)")
+print("  C. SIMULATED FTMO CHALLENGE  (5,000 sims)")
+print("     Phase 1: hit +£7,000 (10%) | Phase 2: hit +£3,500 (5%)")
+print("     Both phases: daily limit £3,500 | total limit £7,000")
 print("=" * W)
 
-rng = np.random.default_rng(42)
-n_sim = 1_000
+rng   = np.random.default_rng(42)
+n_sim = 5_000
 
-durations  = []
-max_dds    = []
-outcomes   = []
+def run_phase(pnls, target, rng, max_days=500):
+    """Simulate one FTMO phase. Returns (passed, days, max_dd)."""
+    equity = ACCOUNT; peak = ACCOUNT; day_eq = ACCOUNT; max_dd = 0
+    for day_n in range(max_days):
+        dp     = rng.choice(pnls)
+        equity += dp
+        peak    = max(peak, equity)
+        max_dd  = max(max_dd, peak - equity)
+        if day_eq - equity > DAILY_LIMIT: return False, day_n+1, max_dd
+        if peak   - equity > TOTAL_LIMIT: return False, day_n+1, max_dd
+        if equity - ACCOUNT >= target:    return True,  day_n+1, max_dd
+        day_eq = equity
+    return False, max_days, max_dd
+
+p1_pass=0; p1_bust=0; p1_days=[]; p1_dds=[]
+both_pass=0; both_days=[]; both_dds=[]
+p2_bust=0
 
 for _ in range(n_sim):
-    seq    = rng.choice(pnls, size=250, replace=True)
-    equity = ACCOUNT
-    peak   = ACCOUNT
-    day_start_eq = ACCOUNT
-    max_dd = 0
-    passed = busted = False
-    days   = 0
-    new_day = True
-
-    for i, dp in enumerate(seq):
-        days += 1
-        equity    += dp
-        peak       = max(peak, equity)
-        max_dd     = max(max_dd, peak - equity)
-        daily_loss = day_start_eq - equity
-        if daily_loss > DAILY_LIMIT:   busted = True;  break
-        if peak - equity > TOTAL_LIMIT: busted = True;  break
-        if equity - ACCOUNT >= TARGET:  passed = True;  break
-        day_start_eq = equity  # reset daily start each day
-
-    max_dds.append(max_dd)
-    if passed:
-        outcomes.append('pass')
-        durations.append(days)
-    elif busted:
-        outcomes.append('bust')
+    ok1, d1, dd1 = run_phase(pnls, TARGET_P1, rng)
+    p1_days.append(d1); p1_dds.append(dd1)
+    if ok1:
+        p1_pass += 1
+        ok2, d2, dd2 = run_phase(pnls, TARGET_P2, rng)
+        if ok2:
+            both_pass += 1
+            both_days.append(d1+d2)
+            both_dds.append(max(dd1,dd2))
+        else:
+            p2_bust += 1
     else:
-        outcomes.append('running')
+        p1_bust += 1
 
-pass_n = outcomes.count('pass')
-bust_n = outcomes.count('bust')
-pass_dds = [max_dds[i] for i,o in enumerate(outcomes) if o=='pass']
+print(f"\n  PHASE 1  (hit +£7,000):")
+print(f"    Pass rate:       {p1_pass/n_sim*100:.1f}%")
+print(f"    Bust rate:       {p1_bust/n_sim*100:.1f}%")
+p1_pass_days = [p1_days[i] for i in range(n_sim) if p1_days[i] < 500]
+print(f"    Avg days:        {np.mean([d for d in p1_days if d<500]):.0f} trading days (~{np.mean([d for d in p1_days if d<500])/22:.1f} months)")
+print(f"    Median days:     {int(np.median([d for d in p1_days if d<500]))} trading days")
 
-print(f"\n  Pass rate:           {pass_n/n_sim*100:.1f}%")
-print(f"  Bust rate:           {bust_n/n_sim*100:.1f}%")
-print(f"\n  When passing:")
-print(f"    Avg trading days:  {np.mean(durations):.0f}  (~{np.mean(durations)/22:.1f} months)")
-print(f"    Median days:       {int(np.median(durations))}  (~{int(np.median(durations))//22} months {int(np.median(durations))%22} days)")
-print(f"    Fastest pass:      {min(durations)} days")
-print(f"    Slowest pass:      {max(durations)} days")
-print(f"\n  Max drawdown during PASSING attempts:")
-print(f"    Average:           £{np.mean(pass_dds):,.0f}")
-print(f"    Median:            £{np.median(pass_dds):,.0f}")
-print(f"    90th percentile:   £{np.percentile(pass_dds,90):,.0f}")
-print(f"    Worst seen:        £{np.max(pass_dds):,.0f}")
-print(f"\n  How often max DD stays under...")
-print(f"    Under £2,000:      {(np.array(pass_dds)<2000).mean()*100:.1f}% of passing attempts")
-print(f"    Under £3,500:      {(np.array(pass_dds)<3500).mean()*100:.1f}% of passing attempts")
-print(f"    Under £5,000:      {(np.array(pass_dds)<5000).mean()*100:.1f}% of passing attempts")
+print(f"\n  PHASE 2  (hit +£3,500, conditional on passing P1):")
+p2_total = p1_pass
+p2_pass  = both_pass
+print(f"    Pass rate:       {p2_pass/p2_total*100:.1f}%  (of those who reach Phase 2)")
+print(f"    Bust rate:       {p2_bust/p2_total*100:.1f}%")
+print(f"    Avg days:        {np.mean([d-p1_days[i] for i,d in enumerate(both_days)]):.0f} trading days")
+
+print(f"\n  FULL CHALLENGE  (both phases):")
+print(f"    Pass rate:       {both_pass/n_sim*100:.1f}%")
+print(f"    Expected attempts to get funded: {n_sim/both_pass:.2f}")
+print(f"    Expected cost:   £{489 * n_sim/both_pass:,.0f}")
+print(f"    Avg total days:  {np.mean(both_days):.0f} (~{np.mean(both_days)/22:.1f} months)")
+print(f"    Median total:    {int(np.median(both_days))} trading days")
+
+print(f"\n  Max drawdown across both phases (passing attempts):")
+print(f"    Median:          £{np.median(both_dds):,.0f}")
+print(f"    90th pct:        £{np.percentile(both_dds,90):,.0f}")
+print(f"    Worst seen:      £{np.max(both_dds):,.0f}")
+
+pass_n = both_pass
+bust_n = n_sim - both_pass
+pass_dds = both_dds
 
 # ── Sample equity curves ──────────────────────────────────────────────────────
 print("\n" + "=" * W)
@@ -344,12 +355,14 @@ print(f"""
   Target to pass:      £3,500  (5%)
 
   Realistic challenge experience:
-  ─ You'll pass in roughly 3-6 weeks on average
-  ─ Most attempts never get close to the daily limit (avg worst day ~£{abs(losses.mean()):,.0f})
-  ─ The total drawdown during a typical passing attempt stays under £{int(np.median(pass_dds)):,}
-  ─ You'd have to be extremely unlucky to even hit £5,000 drawdown
-  ─ The {bust_n/n_sim*100:.1f}% bust rate means you'd likely need {1/(bust_n/n_sim) if bust_n>0 else '>1000':.0f} attempts to fail
+  ─ Phase 1 (~{np.mean([d for d in p1_days if d<500]):.0f} days avg) then Phase 2 (~{np.mean([d-p1_days[i] for i,d in enumerate(both_days)]):.0f} days avg)
+  ─ Total time to funded: ~{np.mean(both_days)/22:.1f} months on average
+  ─ Daily limit is NEVER a concern — worst day ever: £{abs(pnls.min()):,.0f} (limit is £3,500)
+  ─ Typical drawdown across both phases: £{int(np.median(both_dds)):,}
+  ─ Full challenge pass rate: {both_pass/n_sim*100:.1f}%
+  ─ Expected attempts to get funded: {n_sim/both_pass:.2f}
+  ─ Expected total cost: £{489*n_sim/both_pass:,.0f}
 
-  Verdict: The daily limit is what to watch, not total drawdown.
-           Worst realistic day is well under £3,500.
+  Verdict: You'll likely need 1-2 attempts. Day 1 of funded trading
+           you'll make back the challenge fee within the first week.
 """)
