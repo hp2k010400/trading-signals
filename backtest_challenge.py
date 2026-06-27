@@ -324,7 +324,7 @@ while shown < 10 and attempt < 10_000:
         daily_loss = day_start_eq - equity
         if daily_loss > DAILY_LIMIT or peak-equity > TOTAL_LIMIT:
             busted = True; break
-        if equity - ACCOUNT >= TARGET:
+        if equity - ACCOUNT >= TARGET_P1:
             passed = True; break
         day_start_eq = equity
 
