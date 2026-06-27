@@ -9,7 +9,8 @@ input int BarsToExport = 50000;  // 50k H1 bars = ~6 years per symbol
 
 void OnStart()
 {
-   string symbols[] = {"EURUSD", "GBPUSD", "GER40.cash", "US100.cash", "US500.cash"};
+   string symbols[] = {"EURUSD", "GBPUSD", "GER40.cash", "US100.cash", "US500.cash",
+                       "UK100.cash", "XAUUSD", "USDJPY"};
    int exported = 0;
 
    Print("=== 6botV2 H1 Data Export ===");

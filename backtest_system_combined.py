@@ -28,9 +28,9 @@ warnings.filterwarnings('ignore')
 
 # ── Config ──────────────────────────────────────────────────────────────────
 ACCOUNT   = 70_000
-TRAIL_ORB = 0.20
-TRAIL_H4  = 0.30
-TRAIL_DCH = 0.40
+TRAIL_ORB = 0.10   # updated to match live EA (trail after 1R BE, 0.1R multiplier)
+TRAIL_H4  = 0.15
+TRAIL_DCH = 0.20
 PARTIAL_R = None
 
 # Walk-forward date filter — set both to None for full 2-year run

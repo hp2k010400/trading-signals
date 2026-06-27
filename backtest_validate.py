@@ -38,17 +38,26 @@ COST_SCALE = 1.5
 WF_SPLIT   = pd.Timestamp('2025-01-01', tz='UTC')
 
 RISKS = {
-    'DAX_ORB': 0.0075, 'NAS_ORB': 0.0075, 'SP5_ORB': 0.004,
-    'LC_EUR':  0.004,  'LC_GBP':  0.004,  'LC_DAX':  0.0075,
+    'DAX_ORB':  0.0075, 'NAS_ORB':  0.0075, 'SP5_ORB':  0.004,
+    'LC_EUR':   0.004,  'LC_GBP':   0.004,  'LC_DAX':   0.0075,
+    'UK_ORB':   0.0075, 'LC_UK':    0.0075,
+    'GOLD_ORB': 0.004,  'LC_GOLD':  0.004,
+    'JPY_ORB':  0.004,  'ASIA_JPY': 0.004,
 }
 COST_R_BASE = {
-    'DAX_ORB': 0.07,  'NAS_ORB': 0.06,  'SP5_ORB': 0.06,
-    'LC_EUR':  0.08,  'LC_GBP':  0.08,  'LC_DAX':  0.07,
+    'DAX_ORB':  0.07,  'NAS_ORB':  0.06,  'SP5_ORB':  0.06,
+    'LC_EUR':   0.08,  'LC_GBP':   0.08,  'LC_DAX':   0.07,
+    'UK_ORB':   0.07,  'LC_UK':    0.07,
+    'GOLD_ORB': 0.08,  'LC_GOLD':  0.08,
+    'JPY_ORB':  0.08,  'ASIA_JPY': 0.08,
 }
 CSVSYMS = {
-    'EURUSD': 'EURUSD_H1.csv',    'GBPUSD': 'GBPUSD_H1.csv',
-    'DAX':    'GER40_cash_H1.csv','NAS100': 'US100_cash_H1.csv',
-    'SP500':  'US500_cash_H1.csv',
+    'EURUSD':  'EURUSD_H1.csv',    'GBPUSD':  'GBPUSD_H1.csv',
+    'DAX':     'GER40_cash_H1.csv','NAS100':  'US100_cash_H1.csv',
+    'SP500':   'US500_cash_H1.csv',
+    'UK100':   'UK100_cash_H1.csv',
+    'GOLD':    'XAUUSD_H1.csv',
+    'USDJPY':  'USDJPY_H1.csv',
 }
 
 _cache = {}
@@ -432,20 +441,91 @@ if __name__ == '__main__':
     <70%                     →  More live validation first.
 """)
 
-    # ── H. Next instruments to test ───────────────────────────────────────────
+    # ── H. New instrument tests ───────────────────────────────────────────────
     print("=" * W)
-    print("  H. NEXT INSTRUMENTS TO ADD  (export from MT5, then re-run)")
+    print("  H. NEW INSTRUMENTS  (UK100, Gold, USDJPY)")
     print("=" * W)
-    print("""
-  To push toward £10k+/month, export these from MT5 (same process as before):
 
-  Symbol          Strategy to test       Why
-  ──────────────────────────────────────────────────────────────────
-  UK100.cash      DAX_ORB + LC style     London session, same flows as GER40
-  XAUUSD          London ORB + LC        Strongest London breakout in any market
-  USDJPY          Asia ORB               JPY = THE Asian session currency
+    new_strats = {}
 
-  In MT5 ExportH1Data.mq5, add these to the symbols[] array and re-run.
-  Each could add £2,000-4,000/month if PF is similar to existing strategies.
-  £10k+/month average is realistic with 2-3 of these added.
-""")
+    # UK100 — London session ORB (same logic as DAX) + LC
+    if os.path.exists('UK100_cash_H1.csv'):
+        new_strats['UK_ORB']  = run_orb('UK100', 'UK_ORB',  8, 9, 12, 30, 300)
+        new_strats['LC_UK']   = run_london_close('UK100', 'LC_UK', min_move=30.0)
+    else:
+        print("\n  UK100_cash_H1.csv not found — export from MT5 and re-run")
+
+    # Gold — London ORB (08:00 ref, 09:00-12:00 entry) + LC
+    if os.path.exists('XAUUSD_H1.csv'):
+        new_strats['GOLD_ORB'] = run_orb('GOLD', 'GOLD_ORB', 8, 9, 12, 5, 80)
+        new_strats['LC_GOLD']  = run_london_close('GOLD', 'LC_GOLD', min_move=8.0)
+    else:
+        print("  XAUUSD_H1.csv not found — export from MT5 and re-run")
+
+    # USDJPY — Asia ORB (00:00-03:00 range, 03:00-07:00 entry) + London ORB
+    if os.path.exists('USDJPY_H1.csv'):
+        new_strats['JPY_ORB']  = run_orb('USDJPY', 'JPY_ORB', 8, 9, 12, 20, 150)
+        new_strats['ASIA_JPY'] = run_asia_orb_jpy()
+    else:
+        print("  USDJPY_H1.csv not found — export from MT5 and re-run")
+
+    if new_strats:
+        print(f"\n  {'Strategy':<14} {'Tr':>5} {'T/mo':>5} {'WR%':>6} {'PF':>6} "
+              f"{'£/mo':>8}  Verdict")
+        print("  " + "─" * (W - 2))
+
+        new_include = []
+        for tag, trades in new_strats.items():
+            s = stats(trades)
+            if not s:
+                print(f"  {tag:<14}  insufficient data"); continue
+            arr  = s['arr']
+            wins = arr[arr > 5]; loss = arr[arr < -5]
+            if s['pf'] >= 1.5:
+                verdict = '✅ INCLUDE'
+                new_include.append((tag, trades))
+            elif s['pf'] >= 1.3:
+                verdict = '⚠  MAYBE'
+            else:
+                verdict = '❌ SKIP'
+            print(f"  {tag:<14} {s['n']:>5} {s['tpm']:>5.1f} {s['wr']:>5.1f}% "
+                  f"{s['pf']:>6.2f} £{s['mo']:>7,}  {verdict}")
+
+        if new_include:
+            combined = all_trades + [t for _, v in new_include for t in v]
+            sc = stats(combined)
+            dd2, _ = max_drawdown(combined)
+            oos2   = [t for t in combined if t.date >= str(WF_SPLIT.date())]
+            pass2, bust2, _ = ftmo_monte_carlo(oos2)
+            print(f"\n  ── Full portfolio with new instruments ──")
+            print(f"  Trades/mo: {sc['tpm']:.1f}  |  WR: {sc['wr']:.1f}%  |  "
+                  f"PF: {sc['pf']:.2f}  |  £/mo: £{sc['mo']:,.0f}  |  MaxDD: £{dd2:,.0f}")
+            print(f"  FTMO OOS pass rate: {pass2:.1f}%  |  "
+                  f"Expected attempts: {1/(pass2/(pass2+bust2)):.2f}")
+
+
+def run_asia_orb_jpy():
+    """Asia ORB for USDJPY — 00:00-03:00 UTC range, 03:00-07:00 entry."""
+    df = load_h1('USDJPY')
+    if df is None: return []
+    trades = []
+    for date in sorted(set(df.index.normalize().date)):
+        day = pd.Timestamp(date, tz='UTC')
+        if day.dayofweek == 0: continue
+        rdf = df[(df.index >= day) & (df.index < day + pd.Timedelta(hours=3))]
+        if len(rdf) < 2: continue
+        a_hi = rdf['high'].max(); a_lo = rdf['low'].min()
+        rng  = a_hi - a_lo
+        if not (0.10 <= rng <= 0.80): continue  # 10-80 pips for JPY
+        buf  = rng * 0.10
+        edf  = df[(df.index >= day + pd.Timedelta(hours=3)) &
+                  (df.index <  day + pd.Timedelta(hours=7))]
+        ds = str(date)
+        for j in range(len(edf)):
+            b = edf.iloc[j]; p = ipos(df, edf.index[j])
+            if p < 0: continue
+            if b['high'] > a_hi:
+                trades.append(make_trade(df, p, 1,  a_hi, a_lo-buf, 'ASIA_JPY', ds, day.dayofweek)); break
+            if b['low']  < a_lo:
+                trades.append(make_trade(df, p, -1, a_lo, a_hi+buf, 'ASIA_JPY', ds, day.dayofweek)); break
+    return trades
