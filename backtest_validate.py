@@ -240,6 +240,33 @@ def bar_chart(monthly, width=40):
         bar = ('█' * int(abs(v)/mx*width)) if v >= 0 else ('░' * int(abs(v)/mx*width))
         print(f"  {m}  {'+'if v>=0 else'-'}£{abs(v):>7,.0f}  {bar}")
 
+# ── Asia ORB for USDJPY ───────────────────────────────────────────────────────
+def run_asia_orb_jpy():
+    """Asia ORB for USDJPY — 00:00-03:00 UTC range, 03:00-07:00 entry."""
+    df = load_h1('USDJPY')
+    if df is None: return []
+    trades = []
+    for date in sorted(set(df.index.normalize().date)):
+        day = pd.Timestamp(date, tz='UTC')
+        if day.dayofweek == 0: continue
+        rdf = df[(df.index >= day) & (df.index < day + pd.Timedelta(hours=3))]
+        if len(rdf) < 2: continue
+        a_hi = rdf['high'].max(); a_lo = rdf['low'].min()
+        rng  = a_hi - a_lo
+        if not (0.10 <= rng <= 0.80): continue
+        buf  = rng * 0.10
+        edf  = df[(df.index >= day + pd.Timedelta(hours=3)) &
+                  (df.index <  day + pd.Timedelta(hours=7))]
+        ds = str(date)
+        for j in range(len(edf)):
+            b = edf.iloc[j]; p = ipos(df, edf.index[j])
+            if p < 0: continue
+            if b['high'] > a_hi:
+                trades.append(make_trade(df, p, 1,  a_hi, a_lo-buf, 'ASIA_JPY', ds, day.dayofweek)); break
+            if b['low']  < a_lo:
+                trades.append(make_trade(df, p, -1, a_lo, a_hi+buf, 'ASIA_JPY', ds, day.dayofweek)); break
+    return trades
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     W = 70
@@ -502,30 +529,3 @@ if __name__ == '__main__':
                   f"PF: {sc['pf']:.2f}  |  £/mo: £{sc['mo']:,.0f}  |  MaxDD: £{dd2:,.0f}")
             print(f"  FTMO OOS pass rate: {pass2:.1f}%  |  "
                   f"Expected attempts: {1/(pass2/(pass2+bust2)):.2f}")
-
-
-def run_asia_orb_jpy():
-    """Asia ORB for USDJPY — 00:00-03:00 UTC range, 03:00-07:00 entry."""
-    df = load_h1('USDJPY')
-    if df is None: return []
-    trades = []
-    for date in sorted(set(df.index.normalize().date)):
-        day = pd.Timestamp(date, tz='UTC')
-        if day.dayofweek == 0: continue
-        rdf = df[(df.index >= day) & (df.index < day + pd.Timedelta(hours=3))]
-        if len(rdf) < 2: continue
-        a_hi = rdf['high'].max(); a_lo = rdf['low'].min()
-        rng  = a_hi - a_lo
-        if not (0.10 <= rng <= 0.80): continue  # 10-80 pips for JPY
-        buf  = rng * 0.10
-        edf  = df[(df.index >= day + pd.Timedelta(hours=3)) &
-                  (df.index <  day + pd.Timedelta(hours=7))]
-        ds = str(date)
-        for j in range(len(edf)):
-            b = edf.iloc[j]; p = ipos(df, edf.index[j])
-            if p < 0: continue
-            if b['high'] > a_hi:
-                trades.append(make_trade(df, p, 1,  a_hi, a_lo-buf, 'ASIA_JPY', ds, day.dayofweek)); break
-            if b['low']  < a_lo:
-                trades.append(make_trade(df, p, -1, a_lo, a_hi+buf, 'ASIA_JPY', ds, day.dayofweek)); break
-    return trades
