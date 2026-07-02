@@ -121,8 +121,8 @@ def run_swing(key, tag, risk, cost, n_hi=20, n_trail=10, max_days=15):
     trades = []
     for i in range(n_hi + 2, len(d1) - 1):
         prev      = d1.iloc[i - 1]
-        ch_hi     = d1.iloc[i-n_hi:i]['high'].max()
-        ch_lo     = d1.iloc[i-n_hi:i]['low'].min()
+        ch_hi     = d1.iloc[i-n_hi:i-1]['high'].max()   # exclude yesterday so close can break it
+        ch_lo     = d1.iloc[i-n_hi:i-1]['low'].min()
         atr14     = (d1.iloc[max(0,i-14):i]['high'] - d1.iloc[max(0,i-14):i]['low']).mean()
         entry_day = d1.index[i]
         if entry_day.dayofweek >= 4: continue           # skip Fri/Sat
