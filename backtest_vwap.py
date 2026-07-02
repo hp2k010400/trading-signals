@@ -1,374 +1,298 @@
 """
-backtest_vwap.py — VWAP Pullback Strategy Backtester
-Instrument: GER40 (DAX) — tested on M15 and H1
-Strategy: Price above/below daily VWAP = bias. Trade pullbacks TO VWAP with candle confirmation.
-Data: yfinance 1H data (~2 years) + 15m data (60 days)
+backtest_vwap.py  —  Session TWAP Deviation Fade
+=================================================
+Strategy:
+  Calculates session Time-Weighted Average Price (TWAP) from 07:00 UTC daily.
+  TWAP = expanding mean of (H+L+C)/3 — approximates VWAP without volume data.
+  Entry when price deviates > 1.8 × ATR14 from session TWAP.
+  Direction: fade the deviation (price extended → expect reversion to mean).
+  SL:    1.5 × ATR from entry
+  Exit:  price returns to TWAP OR 1R trail after breakeven
+  Window: 10:00-15:00 UTC (avoid open/close noise)
+  Risk:  0.50% per trade | One trade per instrument per day
+  Instruments: GER40, US100, US500 (indices — cleaner intraday structure)
 
+Compares against main 10kbotV3 portfolio and shows combined stats.
 Run: python backtest_vwap.py
 """
-
 import pandas as pd
 import numpy as np
-import yfinance as yf
+import os
 import warnings
+from collections import defaultdict
 warnings.filterwarnings('ignore')
 
-SYMBOL        = "^GDAXI"
-ACCOUNT       = 70000
-RISK_PCT      = 0.005    # 0.5% per trade = £350
-SESSION_START = 8        # UTC
-SESSION_END   = 16       # UTC
-ADX_MIN       = 20       # trend strength gate
-ATR_PERIOD    = 14
-SL_ATR_MULT   = 1.0      # SL = 1 ATR (tighter than H4 because entry is precise)
-TP_ATR_MULT   = 2.0      # TP = 2 ATR = 2R
-BE_ATR_MULT   = 0.8      # move SL to entry after 0.8 ATR profit
-VWAP_ZONE     = 0.0015   # price must be within 0.15% of VWAP to qualify
-MAX_BARS      = 48       # max hold = 48 bars (12 hrs on H1, 12 hrs on M15)
+ACCOUNT    = 70_000
+COST_SCALE = 1.5
+TRAIL      = 0.10
+THRESHOLD  = 1.8   # ATR multiples from TWAP to trigger entry
+RISK       = 0.005
+COST       = 0.08
 
-# ── Data ───────────────────────────────────────────────────────────────────────
+CSVSYMS = {
+    'EURUSD': 'EURUSD_H1.csv',    'GBPUSD': 'GBPUSD_H1.csv',
+    'DAX':    'GER40_cash_H1.csv', 'NAS100': 'US100_cash_H1.csv',
+    'SP500':  'US500_cash_H1.csv', 'UK100':  'UK100_cash_H1.csv',
+    'GOLD':   'XAUUSD_H1.csv',
+}
 
-def fetch(symbol, interval, period):
-    print(f"  Fetching {symbol} {interval} ({period})...", end=" ")
-    df = yf.download(symbol, interval=interval, period=period,
-                     auto_adjust=True, progress=False)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df.columns = [c.lower() for c in df.columns]
-    df = df.dropna()
-    print(f"{len(df)} bars ({df.index[0].date()} → {df.index[-1].date()})")
-    return df
+_cache = {}
+def load_h1(key):
+    if key in _cache: return _cache[key]
+    fname = CSVSYMS.get(key)
+    if not fname or not os.path.exists(fname): _cache[key] = None; return None
+    df = pd.read_csv(fname)
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('time').sort_index()
+    for c in ['open','high','low','close']: df[c] = pd.to_numeric(df[c], errors='coerce')
+    _cache[key] = df.dropna() if len(df) > 200 else None
+    return _cache[key]
 
-# ── VWAP calculation ───────────────────────────────────────────────────────────
+def ipos(df, ts):
+    a = df.index.searchsorted(ts)
+    return int(a) if a < len(df) and df.index[int(a)] == ts else -1
 
-def add_vwap(df):
-    """Daily VWAP — resets each trading day."""
-    df = df.copy()
-    df['typical'] = (df['high'] + df['low'] + df['close']) / 3
+def calc_atr14(df, i, n=14):
+    hi = df['high'].iloc[max(0,i-n):i]
+    lo = df['low'].iloc[max(0,i-n):i]
+    cl = df['close'].iloc[max(0,i-n):i]
+    if len(hi) < 2: return 0.0
+    tr = pd.concat([hi-lo, (hi-cl.shift()).abs(), (lo-cl.shift()).abs()], axis=1).max(axis=1)
+    return tr.mean()
 
-    vwap_vals = []
-    current_date = None
-    cum_tp_vol = 0.0
-    cum_vol    = 0.0
+def pnl_net(r): return (r - COST * COST_SCALE) * RISK * ACCOUNT
 
-    for idx, row in df.iterrows():
-        bar_date = idx.date()
-        if bar_date != current_date:
-            current_date = bar_date
-            cum_tp_vol   = 0.0
-            cum_vol      = 0.0
-
-        vol = row['volume'] if row['volume'] > 0 else 1.0
-        cum_tp_vol += row['typical'] * vol
-        cum_vol    += vol
-        vwap_vals.append(cum_tp_vol / cum_vol)
-
-    df['vwap'] = vwap_vals
-    df['vwap_dist_pct'] = (df['close'] - df['vwap']) / df['vwap']  # + = above, - = below
-    return df
-
-# ── Indicators ─────────────────────────────────────────────────────────────────
-
-def add_indicators(df):
-    df = df.copy()
-
-    # ATR
-    hi, lo, cl = df['high'], df['low'], df['close']
-    tr  = pd.concat([hi-lo, (hi-cl.shift()).abs(), (lo-cl.shift()).abs()], axis=1).max(axis=1)
-    df['atr'] = tr.ewm(com=ATR_PERIOD-1, adjust=False).mean()
-
-    # ADX
-    dmp = ((hi-hi.shift()) > (lo.shift()-lo)).astype(float) * (hi-hi.shift()).clip(lower=0)
-    dmm = ((lo.shift()-lo) > (hi-hi.shift())).astype(float) * (lo.shift()-lo).clip(lower=0)
-    atr_s = tr.ewm(com=ATR_PERIOD-1, adjust=False).mean()
-    dip   = 100 * dmp.ewm(com=ATR_PERIOD-1, adjust=False).mean() / atr_s
-    dim   = 100 * dmm.ewm(com=ATR_PERIOD-1, adjust=False).mean() / atr_s
-    dx    = (100 * (dip-dim).abs() / (dip+dim).replace(0,1)).fillna(0)
-    df['adx'] = dx.ewm(com=ATR_PERIOD-1, adjust=False).mean()
-
-    # RSI
-    delta = df['close'].diff()
-    gain  = delta.clip(lower=0).ewm(com=13, adjust=False).mean()
-    loss  = (-delta.clip(upper=0)).ewm(com=13, adjust=False).mean()
-    df['rsi'] = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
-
-    # EMA 20 for trend bias confirmation
-    df['ema20'] = df['close'].ewm(span=20, adjust=False).mean()
-
-    return df
-
-# ── Candle patterns ────────────────────────────────────────────────────────────
-
-def is_bull_candle(df, i):
-    """Bullish engulfing or pin bar."""
-    if i < 1: return False
-    bar  = df.iloc[i]
-    prev = df.iloc[i-1]
-    r    = bar['high'] - bar['low']
-    if r == 0: return False
-
-    body       = abs(bar['close'] - bar['open'])
-    lower_wick = min(bar['open'], bar['close']) - bar['low']
-
-    engulf = (prev['close'] < prev['open'] and
-              bar['close'] > bar['open'] and
-              bar['open'] < prev['close'] and
-              bar['close'] > prev['open'])
-    pin    = lower_wick >= r * 0.55 and body <= r * 0.35
-
-    return engulf or pin
-
-def is_bear_candle(df, i):
-    """Bearish engulfing or pin bar."""
-    if i < 1: return False
-    bar  = df.iloc[i]
-    prev = df.iloc[i-1]
-    r    = bar['high'] - bar['low']
-    if r == 0: return False
-
-    body       = abs(bar['close'] - bar['open'])
-    upper_wick = bar['high'] - max(bar['open'], bar['close'])
-
-    engulf = (prev['close'] > prev['open'] and
-              bar['close'] < bar['open'] and
-              bar['open'] > prev['close'] and
-              bar['close'] < prev['open'])
-    pin    = upper_wick >= r * 0.55 and body <= r * 0.35
-
-    return engulf or pin
-
-# ── Signal detection ───────────────────────────────────────────────────────────
-
-def get_signal(df, i):
-    """
-    VWAP pullback signal:
-    Bull: price was above VWAP, pulled back TO VWAP zone, bullish candle + ADX ok
-    Bear: price was below VWAP, rallied TO VWAP zone, bearish candle + ADX ok
-    """
-    if i < 20: return None
-
-    bar  = df.iloc[i]
-    prev = df.iloc[i-1]
-
-    vwap     = bar['vwap']
-    dist_pct = bar['vwap_dist_pct']   # how far price is from VWAP
-    atr      = bar['atr']
-    if atr <= 0 or vwap <= 0: return None
-
-    # Must be near VWAP
-    if abs(dist_pct) > VWAP_ZONE: return None
-
-    # ADX gate — need some trend, not complete chaos
-    if bar['adx'] < ADX_MIN: return None
-
-    # Determine VWAP bias from recent price history
-    # Look at where price was 5 bars ago relative to VWAP
-    lookback = min(5, i)
-    prev_above = sum(1 for j in range(i-lookback, i) if df.iloc[j]['close'] > df.iloc[j]['vwap'])
-    prev_below = lookback - prev_above
-
-    # Bull setup: price was predominantly above VWAP, pulled back, bullish candle
-    if prev_above >= 3 and bar['rsi'] < 55 and is_bull_candle(df, i):
-        # Extra filter: current bar low touched or pierced VWAP (genuine pullback)
-        if bar['low'] <= vwap * 1.002:
-            return 'buy'
-
-    # Bear setup: price was predominantly below VWAP, rallied up, bearish candle
-    if prev_below >= 3 and bar['rsi'] > 45 and is_bear_candle(df, i):
-        # Extra filter: current bar high touched or pierced VWAP
-        if bar['high'] >= vwap * 0.998:
-            return 'sell'
-
-    return None
-
-# ── Trade simulation ───────────────────────────────────────────────────────────
-
-def sim_trade(df, entry_i, entry, sl, tp, direction, atr_val):
-    sl_cur  = sl
-    be_done = False
-    be_pts  = BE_ATR_MULT * atr_val
-    be_level = entry + be_pts if direction == 'buy' else entry - be_pts
-
-    for j in range(entry_i+1, min(entry_i+MAX_BARS, len(df))):
-        bar = df.iloc[j]
-
-        if direction == 'buy':
-            if bar['low']  <= sl_cur: return sl_cur, 'sl',  j-entry_i
-            if bar['high'] >= tp:     return tp,     'tp',  j-entry_i
-            if not be_done and bar['high'] >= be_level:
-                be_done = True
-                sl_cur  = entry
-            if be_done:
-                new_sl = bar['high'] - atr_val
-                if new_sl > sl_cur: sl_cur = new_sl
-        else:
-            if bar['high'] >= sl_cur: return sl_cur, 'sl',  j-entry_i
-            if bar['low']  <= tp:     return tp,     'tp',  j-entry_i
-            if not be_done and bar['low'] <= be_level:
-                be_done = True
-                sl_cur  = entry
-            if be_done:
-                new_sl = bar['low'] + atr_val
-                if new_sl < sl_cur: sl_cur = new_sl
-
-    last = df.iloc[min(entry_i+MAX_BARS-1, len(df)-1)]
-    return last['close'], 'timeout', min(MAX_BARS-1, len(df)-entry_i-1)
-
-# ── Backtest runner ────────────────────────────────────────────────────────────
-
-def run(df, label):
-    trades = []
-    last_i = -3
-    risk   = ACCOUNT * RISK_PCT
-
-    for i in range(25, len(df)-1):
-        bar = df.iloc[i]
-        h   = bar.name.hour
-        if h < SESSION_START or h >= SESSION_END: continue
-        if i - last_i < 2: continue
-        if trades and trades[-1].get('exit_i', 0) > i: continue
-
-        direction = get_signal(df, i)
-        if direction is None: continue
-
-        entry   = bar['close']
-        atr_val = bar['atr']
-        vwap    = bar['vwap']
-        if atr_val <= 0: continue
-
-        sl_dist = SL_ATR_MULT * atr_val
-        tp_dist = TP_ATR_MULT * atr_val
-        sl = entry - sl_dist if direction=='buy' else entry + sl_dist
-        tp = entry + tp_dist if direction=='buy' else entry - tp_dist
-
-        ex_price, reason, bars = sim_trade(df, i, entry, sl, tp, direction, atr_val)
-
-        pnl_pts = (ex_price - entry) if direction=='buy' else (entry - ex_price)
-        pnl_r   = pnl_pts / sl_dist
-        pnl_gbp = risk * pnl_r
-
-        trades.append({
-            'date':      bar.name,
-            'direction': direction,
-            'entry':     round(entry, 1),
-            'vwap':      round(vwap, 1),
-            'exit':      round(ex_price, 1),
-            'adx':       round(bar['adx'], 1),
-            'rsi':       round(bar['rsi'], 1),
-            'reason':    reason,
-            'pnl_r':     round(pnl_r, 2),
-            'pnl_gbp':   round(pnl_gbp, 2),
-            'bars':      bars,
-            'exit_i':    i + bars
-        })
-        last_i = i
-
-    return print_results(trades, label)
-
-# ── Results ────────────────────────────────────────────────────────────────────
-
-def print_results(trades, label):
-    if not trades:
-        print(f"  No trades generated for {label}")
-        return {}
-
-    df_t   = pd.DataFrame(trades)
-    wins   = df_t[df_t['pnl_gbp'] >  5]
-    losses = df_t[df_t['pnl_gbp'] < -5]
-    scratch= df_t[(df_t['pnl_gbp'] >= -5) & (df_t['pnl_gbp'] <= 5)]
-
-    n         = len(df_t)
-    win_rate  = len(wins) / n * 100
-    total_pnl = df_t['pnl_gbp'].sum()
-    avg_win   = wins['pnl_gbp'].mean()   if len(wins)   > 0 else 0
-    avg_loss  = losses['pnl_gbp'].mean() if len(losses) > 0 else 0
-    avg_r     = df_t['pnl_r'].mean()
-    gp        = wins['pnl_gbp'].sum()   if len(wins)   > 0 else 0
-    gl        = abs(losses['pnl_gbp'].sum()) if len(losses) > 0 else 1
-    pf        = gp / gl
-
-    df_t['cum']  = df_t['pnl_gbp'].cumsum()
-    df_t['peak'] = df_t['cum'].cummax()
-    df_t['dd']   = df_t['cum'] - df_t['peak']
-    max_dd       = df_t['dd'].min()
-
-    days      = max((df_t['date'].iloc[-1] - df_t['date'].iloc[0]).days, 1)
-    monthly   = total_pnl / days * 30
-    trades_pm = n / (days / 30)
-
-    by_reason = df_t.groupby('reason').agg(
-        count=('pnl_gbp','count'),
-        avg_r=('pnl_r','mean'),
-        total=('pnl_gbp','sum')
-    ).round(2)
-
-    print(f"\n  ┌─ {label}")
-    print(f"  │  Period:         {df_t['date'].iloc[0].date()} → {df_t['date'].iloc[-1].date()}")
-    print(f"  │  Total trades:   {n}  (~{trades_pm:.1f}/month)")
-    print(f"  │  Win rate:       {win_rate:.1f}%  ({len(wins)}W / {len(losses)}L / {len(scratch)} scratch)")
-    print(f"  │  Avg R:          {avg_r:+.3f}R")
-    print(f"  │  Total P&L:      £{total_pnl:,.2f}")
-    print(f"  │  Monthly est.:   £{monthly:,.0f}/month  (at 0.5% risk)")
-    print(f"  │  Monthly @ 1%:   £{monthly*2:,.0f}/month")
-    print(f"  │  Monthly @ 2%:   £{monthly*4:,.0f}/month")
-    print(f"  │  Avg win:        £{avg_win:,.2f}")
-    print(f"  │  Avg loss:       £{avg_loss:,.2f}")
-    print(f"  │  Profit factor:  {pf:.2f}")
-    print(f"  │  Max DD @ 0.5%:  £{max_dd:,.2f}")
-    print(f"  │  Max DD @ 1%:    £{max_dd*2:,.2f}")
-    print(f"  │")
-    print(f"  │  Exit breakdown:")
-    for reason, row in by_reason.iterrows():
-        print(f"  │    {reason:<10} {int(row['count']):>3} | avg {row['avg_r']:>+.2f}R | total £{row['total']:>8.2f}")
-    print(f"  └{'─'*56}")
-
+def stats_from(trades):
+    if len(trades) < 10: return None
+    arr  = np.array([t['pnl'] for t in trades])
+    wins = arr[arr >  5]; loss = arr[arr < -5]
+    dates = sorted(set(t['date'] for t in trades))
+    span  = max((pd.Timestamp(dates[-1]) - pd.Timestamp(dates[0])).days, 1)
     return {
-        'label': label, 'trades': n, 'trades_pm': trades_pm,
-        'win_rate': win_rate, 'avg_r': avg_r,
-        'total_pnl': total_pnl, 'monthly': monthly,
-        'profit_factor': pf, 'max_dd': max_dd
+        'n': len(arr), 'arr': arr,
+        'wr':  round(len(wins)/len(arr)*100, 1),
+        'pf':  round(wins.sum()/abs(loss.sum()), 2) if len(loss) and loss.sum() != 0 else 0.0,
+        'mo':  round(arr.sum()/span*21, 0),
+        'aw':  round(wins.mean()) if len(wins) else 0,
+        'al':  round(abs(loss.mean())) if len(loss) else 0,
+        'tpm': round(len(arr)/span*21, 1),
     }
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+def max_dd(trades):
+    arr = np.array([t['pnl'] for t in sorted(trades, key=lambda x: x['date'])])
+    eq  = ACCOUNT + np.cumsum(arr); pk = np.maximum.accumulate(eq)
+    return round((pk-eq).max(), 0), round((pk-eq).max()/ACCOUNT*100, 2)
 
-if __name__ == "__main__":
-    print("\n" + "="*62)
-    print("  VWAP PULLBACK STRATEGY BACKTESTER — DAX (GER40)")
-    print("  Strategy: Trade pullbacks to daily VWAP with candle confirm")
-    print("  ADX > 20 gate | SL: 1×ATR | TP: 2×ATR | BE at 0.8×ATR")
-    print("  Session: 08:00-16:00 UTC (European)")
-    print("="*62)
+def monthly_map(trades):
+    m = defaultdict(float)
+    for t in trades: m[t['date'][:7]] += t['pnl']
+    return m
 
-    results = []
+# ── TWAP deviation strategy ───────────────────────────────────────────────────
+def run_vwap(key, tag):
+    df = load_h1(key)
+    if df is None: return []
+    trades = []
+    for date in sorted(set(df.index.normalize().date)):
+        day = pd.Timestamp(date, tz='UTC')
+        if day.dayofweek >= 5: continue
+        # Session bars from 07:00 UTC
+        sess = df[(df.index >= day+pd.Timedelta(hours=7)) &
+                  (df.index <  day+pd.Timedelta(hours=17))]
+        if len(sess) < 4: continue
+        # Entry window 10:00-15:00 UTC
+        entry_win = sess[(sess.index.hour >= 10) & (sess.index.hour < 15)]
+        if len(entry_win) == 0: continue
+        fired = False
+        for idx_ts, bar in entry_win.iterrows():
+            if fired: break
+            # All session bars up to and including this bar
+            bars_so_far = sess[sess.index <= idx_ts]
+            if len(bars_so_far) < 4: continue
+            tp    = (bars_so_far['high'] + bars_so_far['low'] + bars_so_far['close']) / 3
+            twap  = tp.mean()
+            atr   = (bars_so_far['high'] - bars_so_far['low']).mean()
+            if atr <= 0 or twap <= 0: continue
+            dev   = (bar['close'] - twap) / atr
+            if abs(dev) < THRESHOLD: continue
+            direction = -1 if dev > 0 else 1   # fade the deviation
+            entry = bar['close']
+            sl    = entry + 1.5*atr if direction == -1 else entry - 1.5*atr
+            if abs(entry - sl) <= 0: continue
+            # Simulate: exit when price returns to TWAP or SL hit
+            p = ipos(df, idx_ts)
+            if p < 0: continue
+            sl_d = abs(entry - sl)
+            cur_sl = sl; best = entry; be = False
+            trail_step = sl_d * TRAIL
+            r = ((df.iloc[min(p+48, len(df)-1)]['close'] - entry) if direction == 1
+                 else (entry - df.iloc[min(p+48, len(df)-1)]['close'])) / sl_d
+            for _, fb in df.iloc[p+1:p+49].iterrows():
+                # Check if price returned to TWAP
+                tp2 = (sess[sess.index <= fb.name]['high'] +
+                       sess[sess.index <= fb.name]['low'] +
+                       sess[sess.index <= fb.name]['close']).mean() / 3
+                if direction == 1:
+                    if fb['low'] <= cur_sl: r = (cur_sl-entry)/sl_d; break
+                    if fb['close'] >= twap: r = (fb['close']-entry)/sl_d; break
+                    best = max(best, fb['high'])
+                    if not be and best >= entry+sl_d: be=True; cur_sl=entry
+                    if be:
+                        ns = best - trail_step
+                        if ns > cur_sl: cur_sl = ns
+                else:
+                    if fb['high'] >= cur_sl: r = (entry-cur_sl)/sl_d; break
+                    if fb['close'] <= twap: r = (entry-fb['close'])/sl_d; break
+                    best = min(best, fb['low'])
+                    if not be and best <= entry-sl_d: be=True; cur_sl=entry
+                    if be:
+                        ns = best + trail_step
+                        if ns < cur_sl: cur_sl = ns
+            trades.append({'pnl': pnl_net(r), 'date': str(date), 'tag': tag, 'r': r})
+            fired = True
+    return trades
 
-    # H1 on 2 years of data
-    print(f"\n{'='*62}\n  H1 Timeframe — 2 years\n{'='*62}")
-    df_1h = fetch(SYMBOL, "1h", "730d")
-    df_1h = add_vwap(df_1h)
-    df_1h = add_indicators(df_1h)
-    r = run(df_1h, "DAX H1 VWAP Pullback")
-    if r: results.append(r)
+# ── Main portfolio (compact, for combined comparison) ─────────────────────────
+MAIN_R = {'DAX_ORB':0.0075,'NAS_ORB':0.0075,'SP5_ORB':0.004,
+          'LC_EUR':0.004,'LC_GBP':0.004,'LC_DAX':0.0075,'LC_UK':0.0075,'LC_GOLD':0.004}
+MAIN_C = {'DAX_ORB':0.07,'NAS_ORB':0.06,'SP5_ORB':0.06,
+          'LC_EUR':0.08,'LC_GBP':0.08,'LC_DAX':0.07,'LC_UK':0.07,'LC_GOLD':0.08}
 
-    # M15 on 60 days (yfinance limit)
-    print(f"\n{'='*62}\n  M15 Timeframe — 60 days\n{'='*62}")
-    df_15 = fetch(SYMBOL, "15m", "60d")
-    df_15 = add_vwap(df_15)
-    df_15 = add_indicators(df_15)
-    r = run(df_15, "DAX M15 VWAP Pullback (60d)")
-    if r: results.append(r)
+def _sim(df, ep, direction, entry, sl, max_bars=80):
+    sl_d = abs(entry-sl)
+    if sl_d <= 0: return -1.0
+    tr=sl_d*TRAIL; cs=sl; bst=entry; be=False
+    for _, b in df.iloc[ep+1:ep+1+max_bars].iterrows():
+        if direction==1:
+            if b['low']<=cs: return (cs-entry)/sl_d
+            bst=max(bst,b['high'])
+            if not be and bst>=entry+sl_d: be=True; cs=entry
+            if be:
+                ns=bst-tr
+                if ns>cs: cs=ns
+        else:
+            if b['high']>=cs: return (entry-cs)/sl_d
+            bst=min(bst,b['low'])
+            if not be and bst<=entry-sl_d: be=True; cs=entry
+            if be:
+                ns=bst+tr
+                if ns<cs: cs=ns
+    lp=df.iloc[min(ep+max_bars,len(df)-1)]['close']
+    return ((lp-entry) if direction==1 else (entry-lp))/sl_d
 
-    # Comparison with H4 EMA result for context
-    print(f"\n{'='*62}")
-    print(f"  VWAP STRATEGY SUMMARY")
-    print(f"{'='*62}")
-    print(f"  {'Strategy':<35} {'Win%':>5}  {'T/mo':>5}  {'Monthly@1%':>11}  {'PF':>5}")
-    print(f"  {'─'*60}")
-    for r in results:
-        print(f"  {r['label']:<35} {r['win_rate']:>4.1f}%  {r['trades_pm']:>5.1f}  "
-              f"£{r['monthly']*2:>9,.0f}  {r['profit_factor']:>5.2f}")
+def run_orb(key,tag,ref_h,es,ee,rmin,rmax,skip_dow=frozenset()):
+    df=load_h1(key)
+    if df is None: return []
+    trades=[]
+    for date in sorted(set(df.index.normalize().date)):
+        day=pd.Timestamp(date,tz='UTC')
+        if day.dayofweek in skip_dow: continue
+        rb=df[df.index==day+pd.Timedelta(hours=ref_h)]
+        if len(rb)==0: continue
+        rhi=rb.iloc[0]['high']; rlo=rb.iloc[0]['low']
+        if not (rmin<=rhi-rlo<=rmax): continue
+        edf=df[(df.index>=day+pd.Timedelta(hours=es))&(df.index<day+pd.Timedelta(hours=ee))]
+        for j in range(len(edf)):
+            b=edf.iloc[j]; p=ipos(df,edf.index[j])
+            if p<0: continue
+            if b['high']>rhi:
+                r=_sim(df,p,1,rhi,rlo); trades.append({'pnl':(r-MAIN_C[tag]*COST_SCALE)*MAIN_R[tag]*ACCOUNT,'date':str(date),'tag':tag,'r':r}); break
+            if b['low']<rlo:
+                r=_sim(df,p,-1,rlo,rhi); trades.append({'pnl':(r-MAIN_C[tag]*COST_SCALE)*MAIN_R[tag]*ACCOUNT,'date':str(date),'tag':tag,'r':r}); break
+    return trades
 
-    print(f"\n  For reference — DAX H4 EMA (previous test):")
-    print(f"  {'DAX H4 EMA Cross':<35} {'67.4%':>5}  {'1.4':>5}  £{'529':>9}  {'2.61':>5}")
-    print(f"\n  FTMO daily limit: £3,500 | Total drawdown limit: £7,000")
-    print(f"  At 1% risk, safe daily worst case: 5 losses × £700 = £3,500 (at limit)")
-    print(f"  Recommendation: use 0.75% risk for safety margin\n")
+def run_lc(key,tag,min_move):
+    df=load_h1(key)
+    if df is None: return []
+    trades=[]
+    for date in sorted(set(df.index.normalize().date)):
+        day=pd.Timestamp(date,tz='UTC')
+        if day.dayofweek==4: continue
+        ob=df[df.index==day+pd.Timedelta(hours=7)]; cb=df[df.index==day+pd.Timedelta(hours=15)]
+        if len(ob)==0 or len(cb)==0: continue
+        move=cb.iloc[0]['close']-ob.iloc[0]['open']
+        if abs(move)<min_move: continue
+        sess=df[(df.index>=day+pd.Timedelta(hours=7))&(df.index<=day+pd.Timedelta(hours=16))]
+        if len(sess)==0: continue
+        dh=sess['high'].max(); dl=sess['low'].min(); buf=(dh-dl)*0.03
+        p=ipos(df,day+pd.Timedelta(hours=16))
+        if p<0: continue
+        entry=df.iloc[p]['open']
+        if move>min_move:
+            sl=dh+buf
+            if sl<=entry: continue
+            r=_sim(df,p,-1,entry,sl)
+        else:
+            sl=dl-buf
+            if sl>=entry: continue
+            r=_sim(df,p,1,entry,sl)
+        trades.append({'pnl':(r-MAIN_C[tag]*COST_SCALE)*MAIN_R[tag]*ACCOUNT,'date':str(date),'tag':tag,'r':r})
+    return trades
+
+def run_main():
+    return (run_orb('DAX','DAX_ORB',8,9,12,30,300)+run_orb('NAS100','NAS_ORB',13,14,16,50,1500,{0,2,4})+
+            run_orb('SP500','SP5_ORB',13,14,16,5,300,{0})+run_lc('EURUSD','LC_EUR',0.0020)+
+            run_lc('GBPUSD','LC_GBP',0.0025)+run_lc('DAX','LC_DAX',30.0)+run_lc('UK100','LC_UK',30.0)+run_lc('GOLD','LC_GOLD',8.0))
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    W = 70
+    print("\n" + "="*W)
+    print("  SESSION TWAP DEVIATION FADE  (approximates institutional VWAP fade)")
+    print("  Entry: price > 1.8×ATR from session mean | Exit: mean retest or trail")
+    print("  3 instruments | 8-year MT5 H1 data | 0.50% risk")
+    print("="*W)
+
+    for k in CSVSYMS: load_h1(k)
+
+    VWAP_STRATS = [
+        ('DAX',   'TWAP_DAX'),
+        ('NAS100','TWAP_NAS'),
+        ('SP500', 'TWAP_SP5'),
+    ]
+
+    all_vwap = []
+    print(f"\n  {'Strategy':<12} {'Tr':>5} {'T/mo':>5} {'WR%':>6} {'PF':>6} "
+          f"{'AvgW':>7} {'AvgL':>7} {'£/mo':>8}")
+    print("  " + "─"*(W-2))
+    for key, tag in VWAP_STRATS:
+        t = run_vwap(key, tag)
+        s = stats_from(t)
+        if not s: print(f"  {tag:<12}  no data / insufficient trades"); continue
+        ok = '✅' if s['pf']>=1.5 else ('⚠ ' if s['pf']>=1.2 else '❌')
+        print(f"  {tag:<12} {s['n']:>5} {s['tpm']:>5.1f} {s['wr']:>5.1f}% "
+              f"{s['pf']:>6.2f} £{s['aw']:>6,} £{s['al']:>6,} £{s['mo']:>7,}  {ok}")
+        all_vwap += t
+
+    vw = stats_from(all_vwap)
+    if vw:
+        dd, ddp = max_dd(all_vwap)
+        print(f"\n  TWAP total: £{vw['mo']:,.0f}/mo | PF {vw['pf']} | WR {vw['wr']}% | MaxDD £{dd:,} ({ddp}%)")
+
+    print(f"\n{'='*W}")
+    print("  Running main 10kbotV3 portfolio for comparison...")
+    print("="*W)
+    main_trades = run_main()
+    ms = stats_from(main_trades)
+    if ms:
+        mdd, mddp = max_dd(main_trades)
+        print(f"\n  Main strategy:  £{ms['mo']:,.0f}/mo | PF {ms['pf']} | WR {ms['wr']}% | MaxDD £{mdd:,} ({mddp}%)")
+
+    if vw and ms:
+        print(f"\n{'='*W}")
+        print("  COMBINED PORTFOLIO  (main + TWAP fade)")
+        print("="*W)
+        all_t = main_trades + all_vwap
+        cs = stats_from(all_t)
+        if cs:
+            cdd, cddp = max_dd(all_t)
+            print(f"\n  Combined:    £{cs['mo']:,.0f}/mo | PF {cs['pf']} | WR {cs['wr']}% | MaxDD £{cdd:,} ({cddp}%)")
+            print(f"  Main alone:  £{ms['mo']:,.0f}/mo | MaxDD £{mdd:,}")
+            print(f"  Improvement: £{cs['mo']-ms['mo']:+,.0f}/mo | DD change: £{cdd-mdd:+,.0f}")
+            vw_m = monthly_map(all_vwap); mn_m = monthly_map(main_trades)
+            common = sorted(set(vw_m) & set(mn_m))
+            if len(common) >= 12:
+                corr = np.corrcoef([vw_m[m] for m in common], [mn_m[m] for m in common])[0,1]
+                verdict = ('Low — good diversifier ✅' if abs(corr)<0.3 else '⚠  Moderate' if abs(corr)<0.6 else '❌ High — correlated')
+                print(f"\n  Monthly correlation with main: {corr:.2f}  →  {verdict}")
+    print()
