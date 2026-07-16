@@ -50,7 +50,8 @@ def load_data():
         if not os.path.exists(fn):
             print(f"  Missing: {fn}")
             continue
-        df = pd.read_csv(fn, parse_dates=['time'])
+        df = pd.read_csv(fn)
+        df['time'] = pd.to_datetime(df['time'])
         df = df.sort_values('time').reset_index(drop=True)
         data[key] = df
     return data
