@@ -32,7 +32,16 @@ def load_h1(key):
     if not os.path.exists(fn): return None
     df = pd.read_csv(fn)
     df['time'] = pd.to_datetime(df['time'])
-    return df.sort_values('time').set_index('time')
+    return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
+
+def get_bar(df, ts):
+    idx = df['time'].searchsorted(ts)
+    if idx < len(df) and df.iloc[idx]['time'] == ts:
+        return df.iloc[idx]
+    return None
+
+def get_dates(df):
+    return pd.to_datetime(df['time'].dt.normalize().unique())
 
 def sim_trade(df, ep, direction, entry, sl, trail=0.05, max_bars=80):
     sl_d = abs(entry - sl)
@@ -52,19 +61,16 @@ def sim_trade(df, ep, direction, entry, sl, trail=0.05, max_bars=80):
 
 def backtest_lc(df, min_move, risk, trail=0.05):
     trades = []
-    dates = df.index.normalize().unique()
-    for date in dates:
+    for date in get_dates(df):
         if date.weekday() == 4: continue
-        try:
-            b07 = df.loc[pd.Timestamp(date.year, date.month, date.day, 7)]
-            b15 = df.loc[pd.Timestamp(date.year, date.month, date.day, 15)]
-        except: continue
+        b07 = get_bar(df, pd.Timestamp(date.year, date.month, date.day, 7))
+        b15 = get_bar(df, pd.Timestamp(date.year, date.month, date.day, 15))
+        if b07 is None or b15 is None: continue
         move = b15['close'] - b07['open']
         if abs(move) < min_move: continue
-        sess = []
-        for h in range(7, 16):
-            try: sess.append(df.loc[pd.Timestamp(date.year, date.month, date.day, h)])
-            except: pass
+        sess = [get_bar(df, pd.Timestamp(date.year, date.month, date.day, h))
+                for h in range(7, 16)]
+        sess = [b for b in sess if b is not None]
         if len(sess) < 2: continue
         d_hi = max(b['high'] for b in sess)
         d_lo = min(b['low']  for b in sess)
@@ -74,7 +80,7 @@ def backtest_lc(df, min_move, risk, trail=0.05):
         sl    = d_hi + buf if d == -1 else d_lo - buf
         sl_d  = abs(entry - sl)
         if sl_d <= 0: continue
-        ep = df.index.searchsorted(pd.Timestamp(date.year, date.month, date.day, 15))
+        ep = int(df['time'].searchsorted(pd.Timestamp(date.year, date.month, date.day, 15)))
         r = sim_trade(df, ep, d, entry, sl, trail)
         r_net = r - COST_PCT
         trades.append(r_net * risk * ACCOUNT)
@@ -82,24 +88,22 @@ def backtest_lc(df, min_move, risk, trail=0.05):
 
 def backtest_orb(df, rmin, rmax, ref_h, win_s, win_e, risk, skip_dow=set(), trail=0.05):
     trades = []
-    dates = df.index.normalize().unique()
-    for date in dates:
+    for date in get_dates(df):
         if date.weekday() in skip_dow: continue
-        ref_ts = pd.Timestamp(date.year, date.month, date.day, ref_h)
-        try: ref = df.loc[ref_ts]
-        except: continue
+        ref = get_bar(df, pd.Timestamp(date.year, date.month, date.day, ref_h))
+        if ref is None: continue
         rng = ref['high'] - ref['low']
         if not (rmin <= rng <= rmax): continue
         for h in range(win_s, win_e):
             ts = pd.Timestamp(date.year, date.month, date.day, h)
-            try: b = df.loc[ts]
-            except: continue
+            b = get_bar(df, ts)
+            if b is None: continue
             if b['close'] > ref['high']:   d, entry, sl = 1,  b['close'], ref['low']
             elif b['close'] < ref['low']:  d, entry, sl = -1, b['close'], ref['high']
             else: continue
             sl_d = abs(entry - sl)
             if sl_d <= 0: continue
-            ep = df.index.searchsorted(ts)
+            ep = int(df['time'].searchsorted(ts))
             r = sim_trade(df, ep, d, entry, sl, trail)
             r_net = r - COST_PCT
             trades.append(r_net * risk * ACCOUNT)

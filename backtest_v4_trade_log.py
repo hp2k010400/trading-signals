@@ -50,14 +50,13 @@ def load_h1(key):
         return None
     df = pd.read_csv(fn)
     df['time'] = pd.to_datetime(df['time'])
-    df = df.sort_values('time').set_index('time')
-    return df
+    return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
 
 def get_bar(df, ts):
-    try:
-        return df.loc[ts]
-    except KeyError:
-        return None
+    idx = df['time'].searchsorted(ts)
+    if idx < len(df) and df.iloc[idx]['time'] == ts:
+        return df.iloc[idx]
+    return None
 
 def sim_trade(df, ep, direction, entry, sl, trail=0.05, max_bars=80):
     sl_d = abs(entry - sl)
@@ -87,17 +86,18 @@ def sim_trade(df, ep, direction, entry, sl, trail=0.05, max_bars=80):
     lp = df.iloc[min(ep + max_bars, len(df) - 1)]['close']
     return ((lp - entry) if direction == 1 else (entry - lp)) / sl_d
 
+def get_dates(df):
+    return pd.to_datetime(df['time'].dt.normalize().unique())
+
 def run_orb(key, tag, ref_h, win_s, win_e, rmin, rmax, risk_pct, trail, skip_dow=frozenset()):
     df = load_h1(key)
     if df is None:
         return []
     trades = []
-    dates = df.index.normalize().unique()
-    for date in dates:
+    for date in get_dates(df):
         if date.weekday() in skip_dow:
             continue
-        ref_ts = pd.Timestamp(date.year, date.month, date.day, ref_h)
-        ref = get_bar(df, ref_ts)
+        ref = get_bar(df, pd.Timestamp(date.year, date.month, date.day, ref_h))
         if ref is None:
             continue
         rng = ref['high'] - ref['low']
@@ -117,10 +117,9 @@ def run_orb(key, tag, ref_h, win_s, win_e, rmin, rmax, risk_pct, trail, skip_dow
             sl_d = abs(entry - sl)
             if sl_d <= 0:
                 continue
-            ep = df.index.searchsorted(ts)
+            ep = int(df['time'].searchsorted(ts))
             r = sim_trade(df, ep, d, entry, sl, trail)
-            cost = COST_PCT
-            r_net = r - cost
+            r_net = r - COST_PCT
             pnl = r_net * risk_pct * ACCOUNT
             trades.append({'tag': tag, 'date': str(date.date()), 'r': r_net,
                            'win': r_net > 0, 'pnl': pnl})
@@ -132,8 +131,7 @@ def run_lc(key, tag, risk_pct, min_move, trail):
     if df is None:
         return []
     trades = []
-    dates = df.index.normalize().unique()
-    for date in dates:
+    for date in get_dates(df):
         if date.weekday() == 4:
             continue
         b07 = get_bar(df, pd.Timestamp(date.year, date.month, date.day, 7))
@@ -143,11 +141,9 @@ def run_lc(key, tag, risk_pct, min_move, trail):
         move = b15['close'] - b07['open']
         if abs(move) < min_move:
             continue
-        sess = []
-        for h in range(7, 16):
-            b = get_bar(df, pd.Timestamp(date.year, date.month, date.day, h))
-            if b is not None:
-                sess.append(b)
+        sess = [get_bar(df, pd.Timestamp(date.year, date.month, date.day, h))
+                for h in range(7, 16)]
+        sess = [b for b in sess if b is not None]
         if len(sess) < 2:
             continue
         d_hi = max(b['high'] for b in sess)
@@ -159,10 +155,9 @@ def run_lc(key, tag, risk_pct, min_move, trail):
         sl_d  = abs(entry - sl)
         if sl_d <= 0:
             continue
-        ep = df.index.searchsorted(pd.Timestamp(date.year, date.month, date.day, 15))
+        ep = int(df['time'].searchsorted(pd.Timestamp(date.year, date.month, date.day, 15)))
         r = sim_trade(df, ep, d, entry, sl, trail)
-        cost = COST_PCT
-        r_net = r - cost
+        r_net = r - COST_PCT
         pnl = r_net * risk_pct * ACCOUNT
         trades.append({'tag': tag, 'date': str(date.date()), 'r': r_net,
                        'win': r_net > 0, 'pnl': pnl})
