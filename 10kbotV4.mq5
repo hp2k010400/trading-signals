@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| 10kbotV4.mq5  —  GC4C £10k/mo 8-Strategy Bot                    |
-//| v4.01  —  Fix: per-LC fired flags prevent duplicate entries       |
+//| v4.02  —  Fix: per-ORB fired flags prevent duplicate entries      |
 //|                                                                   |
 //|  ORB STRATEGIES (morning breakout, SL = ref-bar opposite edge):  |
 //|  1. DAX_ORB  GER40   08:00 ref  10:00-12:00 UTC  all days  0.75%|
@@ -21,7 +21,7 @@
 //|  Attach to ANY chart. Timer fires every 60 seconds.              |
 //+------------------------------------------------------------------+
 #property copyright "GC4C"
-#property version   "4.01"
+#property version   "4.02"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -87,6 +87,7 @@ bool g_blk_dax, g_blk_nas, g_blk_sp5;
 bool g_blk_eur, g_blk_gbp, g_blk_uk,  g_blk_gold;
 bool g_friday_closed;
 bool g_lc_eur, g_lc_gbp, g_lc_dax, g_lc_uk, g_lc_gold;
+bool g_orb_dax, g_orb_nas, g_orb_sp5;
 
 datetime g_last_reset = 0;
 double   g_day_equity = 0;
@@ -104,7 +105,7 @@ int OnInit()
    g_last_reset = (datetime)(TimeGMT()/86400*86400);
    g_day_equity = AccountInfoDouble(ACCOUNT_EQUITY);
    CheckSLHits();
-   Print("10kbotV4 v4.01 online | Magic=",Magic," | Server_UTC=",Server_UTC,
+   Print("10kbotV4 v4.02 online | Magic=",Magic," | Server_UTC=",Server_UTC,
          " | Trail_R=",Trail_R);
    return INIT_SUCCEEDED;
 }
@@ -127,18 +128,18 @@ void OnTimer()
 
    // ── DAX ORB ───────────────────────────────────────────────────────────────
    if(h >= DAX_Start && h < DAX_End)
-      if(!HasFiredToday(Sym_DAX, DAX_Start, DAX_End))
-      { bool tmp; RunORB(Sym_DAX,"DAX_ORB",Risk_ORB_HIGH,DAX_RefH,DAX_RMin,DAX_RMax,tmp); }
+      if(!g_orb_dax && !HasFiredToday(Sym_DAX, DAX_Start, DAX_End))
+      { bool f=false; RunORB(Sym_DAX,"DAX_ORB",Risk_ORB_HIGH,DAX_RefH,DAX_RMin,DAX_RMax,f); if(f) g_orb_dax=true; }
 
    // ── NAS ORB (Tue/Thu only) ────────────────────────────────────────────────
    if(h >= US_Start && h < NAS_End)
-      if((dow==2||dow==4) && !HasFiredToday(Sym_NAS100, US_Start, NAS_End))
-      { bool tmp; RunORB(Sym_NAS100,"NAS_ORB",Risk_ORB_HIGH,US_RefH,NAS_RMin,NAS_RMax,tmp); }
+      if((dow==2||dow==4) && !g_orb_nas && !HasFiredToday(Sym_NAS100, US_Start, NAS_End))
+      { bool f=false; RunORB(Sym_NAS100,"NAS_ORB",Risk_ORB_HIGH,US_RefH,NAS_RMin,NAS_RMax,f); if(f) g_orb_nas=true; }
 
    // ── SP5 ORB (skip Mon) ────────────────────────────────────────────────────
    if(h >= US_Start && h < SP5_End)
-      if(dow!=1 && !HasFiredToday(Sym_SP500, US_Start, SP5_End))
-      { bool tmp; RunORB(Sym_SP500,"SP5_ORB",Risk_ORB_MED,US_RefH,SP5_RMin,SP5_RMax,tmp); }
+      if(dow!=1 && !g_orb_sp5 && !HasFiredToday(Sym_SP500, US_Start, SP5_End))
+      { bool f=false; RunORB(Sym_SP500,"SP5_ORB",Risk_ORB_MED,US_RefH,SP5_RMin,SP5_RMax,f); if(f) g_orb_sp5=true; }
 
    // ── London Close Reversal (16:00 UTC, skip Fri) ───────────────────────────
    if(dow != 5 && h >= LC_Hour)
@@ -171,6 +172,7 @@ void ResetDaily()
    g_blk_dax = g_blk_nas  = g_blk_sp5  = false;
    g_blk_eur = g_blk_gbp  = g_blk_uk   = g_blk_gold = false;
    g_lc_eur  = g_lc_gbp   = g_lc_dax   = g_lc_uk    = g_lc_gold = false;
+   g_orb_dax = g_orb_nas  = g_orb_sp5  = false;
    g_friday_closed = false;
    g_last_reset = today;
    g_day_equity = AccountInfoDouble(ACCOUNT_EQUITY);
