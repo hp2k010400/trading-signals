@@ -49,7 +49,7 @@ def load_h1(key):
     if not os.path.exists(fn):
         return None
     df = pd.read_csv(fn)
-    df['time'] = pd.to_datetime(df['time'])
+    df['time'] = pd.to_datetime(df['time'], unit='s')
     return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
 
 def get_bar(df, ts):
