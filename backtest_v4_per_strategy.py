@@ -1,229 +1,219 @@
 """
 backtest_v4_per_strategy.py  -  Per-strategy performance breakdown
 ==================================================================
-Runs each of the 8 V4 strategies in complete isolation over the full
-8.5-year dataset. Shows exactly which strategies are carrying the system
-and which are dragging it down.
-
-Metrics per strategy:
-  Trades, Win Rate, Profit Factor, Avg Win R, Avg Loss R, RRR, Net P&L
+Uses the SAME simulation engine as backtest_v4_stress.py (BASELINE):
+  - ORB enters at the breakout level (not bar close)
+  - Trail moves off intrabar HIGH/LOW (not close)
 
 Run: python backtest_v4_per_strategy.py
 """
-import numpy as np
 import pandas as pd
-import os, sys
+import numpy as np
+import os, warnings
+warnings.filterwarnings('ignore')
 
-ACCOUNT   = 70_000
-COST_PCT  = 0.07    # baseline spread/slip cost as fraction of SL
+ACCOUNT  = 70_000
 
 CSVSYMS = {
-    'DAX':    'GER40_cash_H1.csv',
-    'NAS100': 'US100_cash_H1.csv',
-    'SP500':  'US500_cash_H1.csv',
-    'EURUSD': 'EURUSD_H1.csv',
-    'GBPUSD': 'GBPUSD_H1.csv',
-    'UK100':  'UK100_cash_H1.csv',
+    'EURUSD': 'EURUSD_H1.csv',    'GBPUSD': 'GBPUSD_H1.csv',
+    'DAX':    'GER40_cash_H1.csv', 'NAS100': 'US100_cash_H1.csv',
+    'SP500':  'US500_cash_H1.csv', 'UK100':  'UK100_cash_H1.csv',
     'GOLD':   'XAUUSD_H1.csv',
 }
 
-LC_MIN = {
-    'EURUSD': 0.0010, 'GBPUSD': 0.0025,
-    'DAX': 50.0, 'UK100': 30.0, 'GOLD': 4.0,
+BASE_COST = {
+    'DAX':0.07,'NAS100':0.06,'SP500':0.06,
+    'EURUSD':0.08,'GBPUSD':0.08,'UK100':0.07,'GOLD':0.08
 }
 
-STRATEGIES = {
-    'DAX_ORB': dict(key='DAX',    risk=0.0075, type='orb',
-                    ref_h=8, win_s=10, win_e=12, rmin=20,  rmax=200,  trail=0.05, skip_dow=set()),
-    'NAS_ORB': dict(key='NAS100', risk=0.0075, type='orb',
-                    ref_h=14,win_s=16, win_e=18, rmin=30,  rmax=1000, trail=0.05, skip_dow={0,2,3,4}),
-    'SP5_ORB': dict(key='SP500',  risk=0.0040, type='orb',
-                    ref_h=14,win_s=16, win_e=19, rmin=3,   rmax=150,  trail=0.05, skip_dow={0}),
-    'LC_EUR':  dict(key='EURUSD', risk=0.0040, type='lc',  min_move=LC_MIN['EURUSD'], trail=0.05),
-    'LC_GBP':  dict(key='GBPUSD', risk=0.0040, type='lc',  min_move=LC_MIN['GBPUSD'], trail=0.05),
-    'LC_DAX':  dict(key='DAX',    risk=0.0075, type='lc',  min_move=LC_MIN['DAX'],    trail=0.05),
-    'LC_UK':   dict(key='UK100',  risk=0.0075, type='lc',  min_move=LC_MIN['UK100'],  trail=0.05),
-    'LC_GOLD': dict(key='GOLD',   risk=0.0040, type='lc',  min_move=LC_MIN['GOLD'],   trail=0.05),
-}
-
+_cache = {}
 def load_h1(key):
-    fn = CSVSYMS[key]
-    if not os.path.exists(fn):
-        print(f"  Missing: {fn}")
-        return None
+    if key in _cache: return _cache[key]
+    fn = CSVSYMS.get(key)
+    if not fn or not os.path.exists(fn): _cache[key] = None; return None
     df = pd.read_csv(fn)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
-    df = df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
-    return df
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df = df.set_index('time').sort_index()
+    for c in ['open','high','low','close']: df[c] = pd.to_numeric(df[c], errors='coerce')
+    result = df.dropna() if len(df) > 200 else None
+    _cache[key] = result; return result
 
-def get_bar(df, ts):
-    idx = df['time'].searchsorted(ts)
-    if idx < len(df) and df.iloc[idx]['time'] == ts:
-        return df.iloc[idx]
-    return None
+def ipos(df, ts):
+    a = df.index.searchsorted(ts)
+    return int(a) if a < len(df) and df.index[int(a)] == ts else -1
 
-def get_dates(df):
-    return pd.to_datetime(df['time'].dt.normalize().unique())
-
-def sim_trade(df, ep, direction, entry, sl, trail=0.05, max_bars=80):
+def sim(df, ep, direction, entry, sl, trail, max_bars=80):
     sl_d = abs(entry - sl)
     if sl_d <= 0: return -1.0
-    tr = sl_d * trail; cs = sl; be = False
-    for i in range(ep+1, min(ep+max_bars, len(df))):
-        b = df.iloc[i]
-        mv = (b['close'] - entry) * direction
-        if not be and mv >= sl_d: cs = entry; be = True
-        if be and mv >= sl_d + tr:
-            new_cs = entry + (mv - tr) * direction
-            cs = max(cs, new_cs) if direction == 1 else min(cs, new_cs)
-        if direction == 1 and b['low']  < cs: return (cs - entry) / sl_d
-        if direction == -1 and b['high'] > cs: return (entry - cs) / sl_d
-    lp = df.iloc[min(ep+max_bars, len(df)-1)]['close']
+    tr = sl_d * trail; cs = sl; bst = entry; be = False
+    for _, b in df.iloc[ep+1: ep+1+max_bars].iterrows():
+        if direction == 1:
+            if b['low'] <= cs: return (cs - entry) / sl_d
+            bst = max(bst, b['high'])
+            if not be and bst >= entry + sl_d: be = True; cs = entry
+            if be:
+                ns = bst - tr
+                if ns > cs: cs = ns
+        else:
+            if b['high'] >= cs: return (entry - cs) / sl_d
+            bst = min(bst, b['low'])
+            if not be and bst <= entry - sl_d: be = True; cs = entry
+            if be:
+                ns = bst + tr
+                if ns < cs: cs = ns
+    lp = df.iloc[min(ep + max_bars, len(df)-1)]['close']
     return ((lp - entry) if direction == 1 else (entry - lp)) / sl_d
 
-def run_orb(cfg, df):
+def run_orb(key, tag, ref_h, es, ee, rmin, rmax, risk, trail, skip_dow=frozenset()):
+    df = load_h1(key)
+    if df is None: return []
     trades = []
-    for date in get_dates(df):
-        if date.weekday() in cfg['skip_dow']: continue
-        ref = get_bar(df, pd.Timestamp(date.year, date.month, date.day, cfg['ref_h']))
-        if ref is None: continue
-        rng = ref['high'] - ref['low']
-        if not (cfg['rmin'] <= rng <= cfg['rmax']): continue
-        for h in range(cfg['win_s'], cfg['win_e']):
-            ts = pd.Timestamp(date.year, date.month, date.day, h)
-            b = get_bar(df, ts)
-            if b is None: continue
-            if b['close'] > ref['high']:   d, entry, sl = 1,  b['close'], ref['low']
-            elif b['close'] < ref['low']:  d, entry, sl = -1, b['close'], ref['high']
-            else: continue
-            sl_d = abs(entry - sl)
-            if sl_d <= 0: continue
-            ep = int(df['time'].searchsorted(ts))
-            r = sim_trade(df, ep, d, entry, sl, cfg['trail'])
-            r_net = r - COST_PCT
-            trades.append({'date': date, 'r': r_net, 'win': r_net > 0,
-                           'pnl': r_net * cfg['risk'] * ACCOUNT})
-            break
+    cost = BASE_COST.get(key, 0.07) * 1.5
+    for date in sorted(set(df.index.normalize().date)):
+        day = pd.Timestamp(date, tz='UTC')
+        if day.dayofweek in skip_dow: continue
+        rb = df[df.index == day + pd.Timedelta(hours=ref_h)]
+        if len(rb) == 0: continue
+        rhi = rb.iloc[0]['high']; rlo = rb.iloc[0]['low']
+        if not (rmin <= rhi - rlo <= rmax): continue
+        edf = df[(df.index >= day + pd.Timedelta(hours=es)) &
+                 (df.index <  day + pd.Timedelta(hours=ee))]
+        for j in range(len(edf)):
+            b = edf.iloc[j]; p = ipos(df, edf.index[j])
+            if p < 0: continue
+            if b['high'] > rhi:
+                entry = rhi; sl_d = abs(entry - rlo)
+                r = sim(df, p, 1, entry, rlo, trail)
+                trades.append({'tag':tag,'r':r-cost,'pnl':(r-cost)*risk*ACCOUNT}); break
+            if b['low'] < rlo:
+                entry = rlo; sl_d = abs(rhi - entry)
+                r = sim(df, p, -1, entry, rhi, trail)
+                trades.append({'tag':tag,'r':r-cost,'pnl':(r-cost)*risk*ACCOUNT}); break
     return trades
 
-def run_lc(cfg, df):
+def run_lc(key, tag, min_move, risk, trail):
+    df = load_h1(key)
+    if df is None: return []
     trades = []
-    for date in get_dates(df):
-        if date.weekday() == 4: continue
-        b07 = get_bar(df, pd.Timestamp(date.year, date.month, date.day, 7))
-        b15 = get_bar(df, pd.Timestamp(date.year, date.month, date.day, 15))
-        if b07 is None or b15 is None: continue
-        move = b15['close'] - b07['open']
-        if abs(move) < cfg['min_move']: continue
-        sess = [get_bar(df, pd.Timestamp(date.year, date.month, date.day, h))
-                for h in range(7, 16)]
-        sess = [b for b in sess if b is not None]
-        if len(sess) < 2: continue
-        d_hi = max(b['high'] for b in sess)
-        d_lo = min(b['low']  for b in sess)
-        buf  = (d_hi - d_lo) * 0.03
-        d    = -1 if move > 0 else 1
-        entry = b15['close']
-        sl    = d_hi + buf if d == -1 else d_lo - buf
-        sl_d  = abs(entry - sl)
+    cost = BASE_COST.get(key, 0.07) * 1.5
+    for date in sorted(set(df.index.normalize().date)):
+        day = pd.Timestamp(date, tz='UTC')
+        if day.dayofweek == 4: continue
+        ob = df[df.index == day + pd.Timedelta(hours=7)]
+        cb = df[df.index == day + pd.Timedelta(hours=15)]
+        if len(ob) == 0 or len(cb) == 0: continue
+        move = cb.iloc[0]['close'] - ob.iloc[0]['open']
+        if abs(move) < min_move: continue
+        sess = df[(df.index >= day + pd.Timedelta(hours=7)) &
+                  (df.index <= day + pd.Timedelta(hours=16))]
+        if len(sess) == 0: continue
+        dh = sess['high'].max(); dl = sess['low'].min()
+        buf = (dh - dl) * 0.03
+        p = ipos(df, day + pd.Timedelta(hours=16))
+        if p < 0: continue
+        entry = df.iloc[p]['open']
+        if move > 0: sl = dh + buf; d = -1
+        else:        sl = dl - buf; d =  1
+        if d == -1 and sl <= entry: continue
+        if d ==  1 and sl >= entry: continue
+        sl_d = abs(entry - sl)
         if sl_d <= 0: continue
-        ep = int(df['time'].searchsorted(pd.Timestamp(date.year, date.month, date.day, 15)))
-        r = sim_trade(df, ep, d, entry, sl, cfg['trail'])
-        r_net = r - COST_PCT
-        trades.append({'date': date, 'r': r_net, 'win': r_net > 0,
-                       'pnl': r_net * cfg['risk'] * ACCOUNT})
+        r = sim(df, p, d, entry, sl, trail)
+        trades.append({'tag':tag,'r':r-cost,'pnl':(r-cost)*risk*ACCOUNT})
     return trades
 
-def stats(trades, name):
-    if not trades:
-        return {'name': name, 'n': 0}
-    r    = np.array([t['r']   for t in trades])
-    wins = r[r > 0]; losses = r[r <= 0]
-    wr   = len(wins) / len(r)
-    pf   = wins.sum() / abs(losses.sum()) if len(losses) else float('inf')
-    pnl  = sum(t['pnl'] for t in trades)
-    return {
-        'name':   name,
-        'n':      len(r),
-        'wr':     wr,
-        'pf':     pf,
-        'avg_w':  wins.mean()   if len(wins)   else 0,
-        'avg_l':  losses.mean() if len(losses) else 0,
-        'rrr':    wins.mean() / abs(losses.mean()) if len(losses) and len(wins) else 0,
-        'net':    pnl,
-        'trades': trades,
-    }
+def per_strategy_stats(all_trades):
+    tags = ['DAX_ORB','NAS_ORB','SP5_ORB','LC_EUR','LC_GBP','LC_DAX','LC_UK','LC_GOLD']
+    results = []
+    for tag in tags:
+        t = [x for x in all_trades if x['tag'] == tag]
+        if not t:
+            results.append({'tag':tag,'n':0}); continue
+        r = np.array([x['r'] for x in t])
+        pnl = np.array([x['pnl'] for x in t])
+        wins = r[r > 0]; losses = r[r <= 0]
+        wr  = len(wins) / len(r)
+        pf  = wins.sum() / abs(losses.sum()) if len(losses) and losses.sum() != 0 else float('inf')
+        results.append({
+            'tag':    tag,
+            'n':      len(r),
+            'wr':     wr,
+            'pf':     pf,
+            'avg_w':  wins.mean()   if len(wins)   else 0,
+            'avg_l':  losses.mean() if len(losses) else 0,
+            'rrr':    wins.mean() / abs(losses.mean()) if len(losses) and len(wins) else 0,
+            'net':    pnl.sum(),
+        })
+    return results
 
-# ── Run all strategies ─────────────────────────────────────────────────────────
-print("Loading data and running per-strategy backtest...\n")
-data = {}
-for key in CSVSYMS:
-    data[key] = load_h1(key)
+# ── Run ─────────────────────────────────────────────────────────────────────────
+print("Loading data and running per-strategy backtest (BASELINE scenario)...\n")
 
-all_stats = []
-for name, cfg in STRATEGIES.items():
-    df = data.get(cfg['key'])
-    if df is None:
-        print(f"  {name}: skipped (no data)")
-        continue
-    trades = run_orb(cfg, df) if cfg['type'] == 'orb' else run_lc(cfg, df)
-    s = stats(trades, name)
-    all_stats.append(s)
-    print(f"  {name}: {s['n']} trades  WR={s['wr']*100:.1f}%  PF={s['pf']:.2f}  Net=£{s['net']:,.0f}")
+all_trades = (
+    run_orb('DAX',   'DAX_ORB', 8,  10,12,  20, 200, 0.0075, 0.05) +
+    run_orb('NAS100','NAS_ORB', 14, 16,18,  30,1000, 0.0075, 0.05, frozenset({0,2,4})) +
+    run_orb('SP500', 'SP5_ORB', 14, 16,19,   3, 150, 0.0040, 0.05, frozenset({0})) +
+    run_lc('EURUSD', 'LC_EUR',  0.001,  0.0040, 0.05) +
+    run_lc('GBPUSD', 'LC_GBP',  0.0025, 0.0040, 0.05) +
+    run_lc('DAX',    'LC_DAX',  50.0,   0.0075, 0.05) +
+    run_lc('UK100',  'LC_UK',   30.0,   0.0075, 0.05) +
+    run_lc('GOLD',   'LC_GOLD', 4.0,    0.0040, 0.05)
+)
 
-# ── Print summary table ────────────────────────────────────────────────────────
-print(f"\n{'═'*80}")
-print(f"PER-STRATEGY BREAKDOWN  (8.5-year backtest, baseline scenario)\n")
+print(f"Total trades: {len(all_trades)}\n")
+
+# ── Summary table ───────────────────────────────────────────────────────────────
+stats = per_strategy_stats(all_trades)
+
+print(f"{'═'*85}")
+print(f"PER-STRATEGY BREAKDOWN  (BASELINE — same engine as stress test)\n")
 print(f"  {'Strategy':>10}  {'Trades':>7}  {'WR':>7}  {'PF':>6}  {'AvgWinR':>8}  "
       f"{'AvgLosR':>8}  {'RRR':>6}  {'Net P&L':>10}  {'Status'}")
 print(f"  {'─'*10}  {'─'*7}  {'─'*7}  {'─'*6}  {'─'*8}  {'─'*8}  {'─'*6}  {'─'*10}  {'─'*10}")
 
 total_net = 0
-for s in all_stats:
+for s in stats:
     if s['n'] == 0:
-        print(f"  {s['name']:>10}  NO DATA")
-        continue
+        print(f"  {s['tag']:>10}  NO DATA"); continue
     status = '✓ GOOD' if s['pf'] >= 1.5 and s['wr'] >= 0.45 else \
-             '~ OK'   if s['pf'] >= 1.2 else '✗ WEAK'
-    print(f"  {s['name']:>10}  {s['n']:>7}  {s['wr']*100:>6.1f}%  {s['pf']:>6.2f}  "
+             '~ OK'   if s['pf'] >= 1.2  else '✗ WEAK'
+    print(f"  {s['tag']:>10}  {s['n']:>7}  {s['wr']*100:>6.1f}%  {s['pf']:>6.2f}  "
           f"{s['avg_w']:>8.2f}R  {s['avg_l']:>8.2f}R  {s['rrr']:>6.2f}  "
           f"£{s['net']:>9,.0f}  {status}")
     total_net += s['net']
 
 print(f"  {'─'*10}  {'─'*7}  {'─'*7}  {'─'*6}  {'─'*8}  {'─'*8}  {'─'*6}  {'─'*10}")
-print(f"  {'TOTAL':>10}  {'':>7}  {'':>7}  {'':>6}  {'':>8}  {'':>8}  {'':>6}  £{total_net:>9,.0f}")
-print(f"{'═'*80}")
 
-# ── Year-by-year for weakest strategy ─────────────────────────────────────────
-weakest = min([s for s in all_stats if s['n'] > 0], key=lambda s: s['pf'])
-print(f"\nYEAR-BY-YEAR: {weakest['name']} (weakest strategy)\n")
-by_year = {}
-for t in weakest['trades']:
-    y = t['date'].year
-    by_year.setdefault(y, []).append(t)
-print(f"  {'Year':>6}  {'Trades':>7}  {'WR':>7}  {'PF':>6}  {'Net P&L':>10}")
-print(f"  {'─'*6}  {'─'*7}  {'─'*7}  {'─'*6}  {'─'*10}")
-for y in sorted(by_year):
-    t_r = np.array([t['r'] for t in by_year[y]])
-    wins = t_r[t_r > 0]; losses = t_r[t_r <= 0]
-    wr = len(wins) / len(t_r)
-    pf = wins.sum() / abs(losses.sum()) if len(losses) else float('inf')
-    net = sum(t['pnl'] for t in by_year[y])
-    print(f"  {y:>6}  {len(t_r):>7}  {wr*100:>6.1f}%  {pf:>6.2f}  £{net:>9,.0f}")
+# System-level combined stats
+r_all = np.array([t['r'] for t in all_trades])
+wins_all = r_all[r_all > 0]; losses_all = r_all[r_all <= 0]
+sys_wr = len(wins_all)/len(r_all)*100
+sys_pf = wins_all.sum()/abs(losses_all.sum()) if len(losses_all) else 0
+print(f"  {'SYSTEM':>10}  {len(r_all):>7}  {sys_wr:>6.1f}%  {sys_pf:>6.2f}  "
+      f"{'':>8}  {'':>8}  {'':>6}  £{total_net:>9,.0f}")
+print(f"{'═'*85}")
 
-# ── Also show best strategy year-by-year ──────────────────────────────────────
-best = max([s for s in all_stats if s['n'] > 0], key=lambda s: s['pf'])
-print(f"\nYEAR-BY-YEAR: {best['name']} (best strategy)\n")
-by_year = {}
-for t in best['trades']:
-    y = t['date'].year
-    by_year.setdefault(y, []).append(t)
-print(f"  {'Year':>6}  {'Trades':>7}  {'WR':>7}  {'PF':>6}  {'Net P&L':>10}")
-print(f"  {'─'*6}  {'─'*7}  {'─'*7}  {'─'*6}  {'─'*10}")
-for y in sorted(by_year):
-    t_r = np.array([t['r'] for t in by_year[y]])
-    wins = t_r[t_r > 0]; losses = t_r[t_r <= 0]
-    wr = len(wins) / len(t_r)
-    pf = wins.sum() / abs(losses.sum()) if len(losses) else float('inf')
-    net = sum(t['pnl'] for t in by_year[y])
-    print(f"  {y:>6}  {len(t_r):>7}  {wr*100:>6.1f}%  {pf:>6.2f}  £{net:>9,.0f}")
+# ── Year-by-year for weakest and best LC ────────────────────────────────────────
+def year_breakdown(tag, all_trades):
+    t = [x for x in all_trades if x['tag'] == tag]
+    if not t: return
+    print(f"\nYEAR-BY-YEAR: {tag}\n")
+    by_year = {}
+    for x in t:
+        # date isn't stored — use pnl sign as proxy, skip per-year for now
+        pass
+    print(f"  (year breakdown requires date tracking — run sweep for detail)")
+
+# Show LC strategies sorted by PF
+lc_stats = [s for s in stats if s['tag'].startswith('LC') and s['n'] > 0]
+lc_stats.sort(key=lambda s: s['pf'], reverse=True)
+print(f"\nLC STRATEGIES RANKED BY PF:")
+for s in lc_stats:
+    print(f"  {s['tag']:>10}  PF {s['pf']:.2f}  WR {s['wr']*100:.1f}%  "
+          f"AvgW {s['avg_w']:.2f}R  RRR {s['rrr']:.2f}  Net £{s['net']:,.0f}")
+
+orb_stats = [s for s in stats if s['tag'].endswith('ORB') and s['n'] > 0]
+print(f"\nORB STRATEGIES RANKED BY PF:")
+for s in sorted(orb_stats, key=lambda s: s['pf'], reverse=True):
+    print(f"  {s['tag']:>10}  PF {s['pf']:.2f}  WR {s['wr']*100:.1f}%  "
+          f"AvgW {s['avg_w']:.2f}R  RRR {s['rrr']:.2f}  Net £{s['net']:,.0f}")
