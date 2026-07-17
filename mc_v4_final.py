@@ -25,7 +25,7 @@ from math import sqrt, ceil
 
 np.random.seed(42)
 
-START_BAL   = 67_624
+START_BAL   = 66_845
 TARGET      = 77_000
 FLOOR       = 63_000
 DAILY_LIMIT = 3_500
