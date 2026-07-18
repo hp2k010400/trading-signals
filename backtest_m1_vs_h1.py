@@ -30,9 +30,9 @@ CSVSYMS_H1 = {
     'GOLD':   'XAUUSD_H1.csv',
 }
 CSVSYMS_M1 = {
-    'EURUSD': 'EURUSD_M1.csv',    'GBPUSD': 'GBPUSD_M1.csv',
-    'DAX':    'GER40_cash_M1.csv', 'NAS100': 'US100_cash_M1.csv',
-    'SP500':  'US500_cash_M1.csv', 'UK100':  'UK100_cash_M1.csv',
+    'EURUSD': 'EURUSD_M1.csv',       'GBPUSD': 'GBPUSD_M1.csv',
+    'DAX':    'GER40.cash_M1.csv',   'NAS100': 'US100.cash_M1.csv',
+    'SP500':  'US500.cash_M1.csv',   'UK100':  'UK100.cash_M1.csv',
     'GOLD':   'XAUUSD_M1.csv',
 }
 
@@ -47,6 +47,12 @@ def load(fn):
     if not os.path.exists(fn):
         _cache[fn] = None; return None
     df = pd.read_csv(fn)
+    # Some MT5 exports have a stray text line before the header row
+    if 'time' not in df.columns:
+        df = pd.read_csv(fn, skiprows=1)
+    if 'time' not in df.columns:
+        print(f"  WARNING: {fn} has no 'time' column — skipping")
+        _cache[fn] = None; return None
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
     df = df.set_index('time').sort_index()
     for c in ['open','high','low','close']:
