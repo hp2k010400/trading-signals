@@ -80,42 +80,73 @@ for idx, (local_sym, duka_sym, out_file, scale) in enumerate(INSTRUMENTS, 1):
         print(f'  Already exists ({os.path.getsize(out_file)//1024:,} KB) -- skipping')
         continue
 
-    all_rows = []
-    d = START
+    # Resume from last saved date if file already exists
+    resume_from = START
+    existing_rows = 0
+    if os.path.exists(out_file):
+        try:
+            df_ex = pd.read_csv(out_file)
+            if len(df_ex) > 0:
+                last_ts = int(df_ex['time'].max())
+                last_dt = datetime.datetime.fromtimestamp(last_ts, tz=datetime.timezone.utc)
+                resume_from = last_dt.date() + datetime.timedelta(days=1)
+                existing_rows = len(df_ex)
+                print(f'  Resuming from {resume_from} ({existing_rows:,} bars already saved)', flush=True)
+        except Exception:
+            pass
+
+    if resume_from > END:
+        print(f'  Already complete — skipping', flush=True)
+        continue
+
+    d = resume_from
     total_days = (END - START).days
-    done = 0
+    done = (resume_from - START).days
     errors = 0
-    last_print = 0
+    last_print = int(done / total_days * 100 // 10) * 10
+
+    # Open file in append mode so each day is saved immediately
+    write_header = not os.path.exists(out_file) or existing_rows == 0
+    f_out = open(out_file, 'a', newline='')
+    import csv as csv_mod
+    writer = csv_mod.writer(f_out)
+    if write_header:
+        writer.writerow(['time','open','high','low','close','tick_volume'])
+
+    total_bars = existing_rows
 
     while d <= END:
-        if d.weekday() < 5:  # Mon-Fri only
+        if d.weekday() < 5:
             rows = fetch_day(duka_sym, scale, d)
             if rows:
-                all_rows.extend(rows)
+                for row in rows:
+                    writer.writerow(row)
+                total_bars += len(rows)
             else:
                 errors += 1
+            f_out.flush()
         d += datetime.timedelta(days=1)
         done += 1
 
         pct = done / total_days * 100
         if pct - last_print >= 10:
             last_print = int(pct // 10) * 10
-            print(f'  {pct:4.0f}%  bars={len(all_rows):>8,}  errors={errors}', flush=True)
+            print(f'  {pct:4.0f}%  bars={total_bars:>8,}  errors={errors}  date={d}', flush=True)
 
         time.sleep(0.02)
 
-    if not all_rows:
-        print(f'  ERROR: No data returned. Check that "{duka_sym}" is the correct Dukascopy symbol.')
-        print(f'  Common alternatives: GER30 (old DAX), DE40EUR (new DAX), USNAS100 (NAS)')
+    f_out.close()
+
+    if total_bars == existing_rows:
+        print(f'  ERROR: No new data. Check symbol "{duka_sym}".')
+        print(f'  Alternatives: GER30/DE40EUR (DAX), USNAS100 (NAS)')
         continue
 
-    df = pd.DataFrame(all_rows, columns=['time','open','high','low','close','tick_volume'])
-    df = df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
-
-    ok = validate(local_sym, df)
-    df.to_csv(out_file, index=False)
+    # Validate
+    df_check = pd.read_csv(out_file, nrows=100)
+    ok = validate(local_sym, df_check)
     status = 'OK' if ok else 'CHECK PRICES'
-    print(f'  {status}  {len(df):,} bars saved  price range: {df.open.min():.2f}-{df.open.max():.2f}')
+    print(f'  {status}  {total_bars:,} total bars saved', flush=True)
 
 print('\n\nAll downloads complete.')
 print('Run backtest_v4_m1.py to get the accurate M1 backtest results.')
