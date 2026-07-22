@@ -21,7 +21,7 @@ System stats from OOS backtest 2022-2026 (IB + PB, 9 instruments):
 import numpy as np
 
 # -- PARAMETERS ---------------------------------------------------------------
-BALANCE_START    = 65_076.0
+BALANCE_START    = 64_389.0
 TARGET           = 77_000.0
 FLOOR            = 63_000.0
 DAILY_LOSS_LIMIT = 3_500.0
@@ -92,18 +92,20 @@ print('  FTMO 70k Recovery Monte Carlo  (no time limit)')
 print('=' * 68)
 print(f'  Simulations: {N_SIMS:,}')
 print()
-print(f'  {"":30}  {"Current (65k)":>14}  {"Clean (70k)":>12}')
+print(f'  {"":30}  {"Current (64.4k)":>14}  {"Clean (70k)":>12}')
 print('  ' + '-' * 60)
 print(f'  {"Pass probability":30}  {pct_pass_now:>13.1f}%  {pct_pass_clean:>11.1f}%')
 print(f'  {"Blow probability":30}  {pct_blown_now:>13.1f}%  {100-pct_pass_clean:>11.1f}%')
 if timeout_now > 0:
     print(f'  {"Timeout (>365 days)":30}  {timeout_now/N_SIMS*100:>13.1f}%  {"n/a":>12}')
 print()
-print(f'  --- When passing ---')
-print(f'  {"Median days to pass":30}  {np.median(pass_days_now):>13.0f}   {np.median(pass_days_clean):>11.0f}')
-print(f'  {"Mean days to pass":30}  {np.mean(pass_days_now):>13.0f}   {np.mean(pass_days_clean):>11.0f}')
-print(f'  {"p10 days (fast run)":30}  {np.percentile(pass_days_now,10):>13.0f}   {np.percentile(pass_days_clean,10):>11.0f}')
-print(f'  {"p90 days (slow run)":30}  {np.percentile(pass_days_now,90):>13.0f}   {np.percentile(pass_days_clean,90):>11.0f}')
+print(f'  --- When passing (days to reach target) ---')
+print(f'  {"Best case  (p10)":30}  {np.percentile(pass_days_now,10):>13.0f}')
+print(f'  {"Typical    (p50 median)":30}  {np.median(pass_days_now):>13.0f}')
+print(f'  {"Mean":30}  {np.mean(pass_days_now):>13.0f}')
+print(f'  {"Slow run   (p90)":30}  {np.percentile(pass_days_now,90):>13.0f}')
+print(f'  {"Worst case (p95)":30}  {np.percentile(pass_days_now,95):>13.0f}')
+print(f'  {"Extreme    (p99)":30}  {np.percentile(pass_days_now,99):>13.0f}')
 print()
 print('=' * 68)
 print()
