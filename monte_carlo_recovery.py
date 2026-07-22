@@ -21,7 +21,7 @@ System stats from OOS backtest 2022-2026 (IB + PB, 9 instruments):
 import numpy as np
 
 # -- PARAMETERS ---------------------------------------------------------------
-BALANCE_START    = 64_389.0
+BALANCE_START    = 63_562.0
 TARGET           = 77_000.0
 FLOOR            = 63_000.0
 DAILY_LOSS_LIMIT = 3_500.0
