@@ -323,7 +323,7 @@ for k in loaded:
         dow = ts.dayofweek
         if dow in skip: continue
         if day_count.get(date_k, 0) >= MAX_PD: continue
-        if key == 'USDJPY':
+        if k == 'USDJPY':
             bar = h1.iloc[i]
             pb_dir = pin_bar_dir(float(bar['open']),float(bar['high']),
                                   float(bar['low']),float(bar['close']))
