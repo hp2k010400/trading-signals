@@ -110,7 +110,7 @@ def collect_oos(key):
     h1 = m1w.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
     h1 = h1[h1['open'] > 0]
     hl = list(h1.index); out = []; day_count = {}
-    for i in range(len(hl) if key=='USDJPY' else 1, len(hl)):
+    for i in range(0 if key=='USDJPY' else 1, len(hl)):
         ts = hl[i]
         if ts.dayofweek in skip: continue
         if ts.hour not in p_hours: continue
