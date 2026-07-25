@@ -66,15 +66,15 @@ H1_HOURS = {
     'NATGAS': {13, 14, 15, 16},
 }
 H1_SKIP = {
-    'DAX':    frozenset({4}),
-    'EURUSD': frozenset({4}),
-    'GBPUSD': frozenset({4}),
-    'USDJPY': frozenset({4}),
-    'GOLD':   frozenset({4}),
-    'NATGAS': frozenset({4}),
-    'NAS100': frozenset({0, 4}),
-    'SP500':  frozenset({0, 4}),
-    'US30':   frozenset({0, 4}),
+    'DAX':    frozenset(),       # trade Mon-Fri: PF 3.40 Friday OOS
+    'EURUSD': frozenset(),
+    'GBPUSD': frozenset(),
+    'USDJPY': frozenset(),
+    'GOLD':   frozenset(),
+    'NATGAS': frozenset(),
+    'NAS100': frozenset({0}),    # skip Monday only: Friday PF 6.74 OOS
+    'SP500':  frozenset({0}),
+    'US30':   frozenset({0}),
 }
 # USDJPY uses Pin Bar only in the EA (no Inside Bar)
 PB_ONLY = {'USDJPY'}

@@ -30,7 +30,7 @@ WICK_BODY  = 2.0
 WICK_RANGE = 0.5
 
 H1_HOURS = {0, 1, 2, 8, 9}
-H1_SKIP  = frozenset({4})  # no Friday
+H1_SKIP  = frozenset()  # trade all weekdays: Friday PF 2.20 OOS, consistent with Mon-Thu
 
 OOS_START = pd.Timestamp(2022, 1, 1, tz='UTC')
 OOS_END   = pd.Timestamp(2026, 1, 1, tz='UTC')
