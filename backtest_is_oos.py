@@ -164,30 +164,37 @@ loaded = [k for k in FILES if load(k)]
 IS_MONTHS  = (IS_END  - IS_START).days  / 30.44
 OOS_MONTHS = (OOS_END - OOS_START).days / 30.44
 
+# Collect once per instrument, cache results
+print('Collecting IS 2018-2021...')
+cache_is  = {}
+cache_oos = {}
+for k in loaded:
+    print(f'  {k} IS...', flush=True)
+    cache_is[k]  = collect(k, IS_START,  IS_END)
+    print(f'  {k} OOS...', flush=True)
+    cache_oos[k] = collect(k, OOS_START, OOS_END)
+
+all_is  = [t for k in loaded for t in cache_is[k]]
+all_oos = [t for k in loaded for t in cache_oos[k]]
+
 print('\n' + '='*80)
 print('  IN-SAMPLE vs OUT-OF-SAMPLE COMPARISON  |  STRATEGY_BOTH')
 print('='*80)
 print(f'\n  {"Period":>22}  {"Trades":>6}  {"Trades/mo":>9}  {"PF":>6}  {"WR":>8}  {"AvgR":>7}  {"Hold(bars)":>10}')
 print(f'  {"-"*72}')
 
-all_is=[]; all_oos=[]
-for k in loaded:
-    t_is  = collect(k, IS_START,  IS_END)
-    t_oos = collect(k, OOS_START, OOS_END)
-    all_is.extend(t_is); all_oos.extend(t_oos)
-
 report('IS  2018-2021', all_is,  IS_MONTHS)
 report('OOS 2022-2025', all_oos, OOS_MONTHS)
 
 print(f'  {"-"*72}')
 
-# Per-instrument breakdown
+# Per-instrument breakdown (uses cached results — no re-collect)
 print(f'\n  Per-instrument breakdown:\n')
 print(f'  {"Instrument":>12}  {"IS PF":>7}  {"IS N":>6}  {"OOS PF":>8}  {"OOS N":>7}  {"WFE":>6}')
 print(f'  {"-"*55}')
 for k in loaded:
-    t_is  = collect(k, IS_START,  IS_END)
-    t_oos = collect(k, OOS_START, OOS_END)
+    t_is  = cache_is[k]
+    t_oos = cache_oos[k]
     def pf(t):
         if not t: return 0.0
         r=np.array([x['r_net'] for x in t]); w=r[r>0]; l=r[r<=0]

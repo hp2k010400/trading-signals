@@ -29,10 +29,18 @@ warnings.filterwarnings('ignore')
 # the script will tell you if there's a time offset issue.
 
 LIVE_TRADES = [
-    # Example — replace these with your actual trades:
-    # {'sym': 'EURUSD',  'open_time': '2026-07-07 09:02', 'dir':  1, 'price': 1.08234},
-    # {'sym': 'USDJPY',  'open_time': '2026-07-07 01:01', 'dir': -1, 'price': 160.123},
-    # {'sym': 'NAS100',  'open_time': '2026-07-08 13:15', 'dir':  1, 'price': 19850.0},
+    # MT5 shows UTC+3 (OANDA FTMO server). All times below are converted to UTC (-3h).
+    # ---- CLOSED TRADES ----
+    {'sym': 'EURUSD',  'open_time': '2026-07-23 10:08', 'dir': -1, 'price': 1.14094},   # sell, closed +1376
+    {'sym': 'GOLD',    'open_time': '2026-07-23 17:40', 'dir': -1, 'price': 4042.16},   # xauusd sell, -347
+    {'sym': 'GOLD',    'open_time': '2026-07-24 10:04', 'dir':  1, 'price': 4060.69},   # xauusd buy, -358
+    {'sym': 'GBPUSD',  'open_time': '2026-07-24 10:21', 'dir':  1, 'price': 1.33224},   # buy, -369
+    {'sym': 'NAS100',  'open_time': '2026-07-23 16:02', 'dir':  1, 'price': 28445.88},  # us100.cash buy, -397
+    {'sym': 'GER40',   'open_time': '2026-07-23 11:08', 'dir': -1, 'price': 24941.96},  # ger40.cash sell, -360
+    {'sym': 'NATGAS',  'open_time': '2026-07-24 14:30', 'dir':  1, 'price': 2.999},     # natgas buy, -501
+    # ---- STILL OPEN ----
+    {'sym': 'EURUSD',  'open_time': '2026-07-23 15:41', 'dir':  1, 'price': 1.13762},   # buy, open
+    {'sym': 'SP500',   'open_time': '2026-07-23 16:09', 'dir':  1, 'price': 7408.85},   # us500.cash buy, open
 ]
 
 # ─── Strategy parameters (must match EA) ─────────────────────────────────────
