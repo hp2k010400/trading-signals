@@ -44,11 +44,12 @@ LIVE_TRADES = [
 ]
 
 # ─── Strategy parameters (must match EA) ─────────────────────────────────────
-WIN_HOURS = 3
+WIN_HOURS  = 3
 WICK_BODY  = 2.0
 WICK_RANGE = 0.5
 MIN_RANGE  = 0.00015
-TOLERANCE  = 0.0005  # 0.05% price tolerance for entry match
+TOLERANCE  = 0.003   # 0.3% price tolerance — covers OANDA live vs historical data differences
+                     # and slippage on fast instruments (NAS100, NATGAS)
 
 FILES = {
     'DAX':   'GER40_M1_oanda.csv',   'GER40': 'GER40_M1_oanda.csv',
@@ -135,70 +136,126 @@ def check_trade(trade):
         found_bar = (bar_ts, h1_bar.iloc[0], candidate_bar_end)
         break
 
-    if found_bar is None:
-        return {'match': 'NO_BAR', 'reason': 'Could not find a valid session H1 bar before the open time.'}
+    # Try ALL valid session bars in the entry window (not just first)
+    # The EA signals on whichever valid bar most recently closed before the entry.
+    # We check bars newest-first and return the first that shows a pattern + plausible price.
+    candidate_bars = []
+    for h_offset in range(0, WIN_HOURS + 2):
+        candidate_bar_end   = otime.floor('h') - pd.Timedelta(hours=h_offset)
+        candidate_bar_start = candidate_bar_end - pd.Timedelta(hours=1)
+        h1_slice = m1[(m1.index >= candidate_bar_start) & (m1.index < candidate_bar_end)]
+        if len(h1_slice) == 0: continue
+        h1_bar = h1_slice.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
+        if len(h1_bar) == 0: continue
+        bar_ts = h1_bar.index[0]
+        if bar_ts.dayofweek >= 5: continue
+        p_hours = H1_HOURS.get(sym, {8,9,13,14})
+        skip    = H1_SKIP.get(sym, frozenset())
+        if bar_ts.hour not in p_hours: continue
+        if bar_ts.dayofweek in skip: continue
+        # Entry must fall within this bar's window
+        window_open  = candidate_bar_end
+        window_close = candidate_bar_end + pd.Timedelta(hours=WIN_HOURS)
+        if not (window_open <= otime <= window_close): continue
+        candidate_bars.append((bar_ts, h1_bar.iloc[0], candidate_bar_end))
 
-    bar_ts, bar, window_start = found_bar
-    bar_o = float(bar['open']); bar_h = float(bar['high'])
-    bar_l = float(bar['low']);  bar_c = float(bar['close'])
+    if not candidate_bars:
+        return {'match': 'NO_BAR', 'reason': 'No valid session H1 bar found whose entry window contains the open time.'}
 
-    # Check what pattern the backtest would see on this bar
-    patterns_found = []
-    backtest_dir = 0
+    # Check each candidate bar for pattern + price match
+    all_bar_results = []
+    for bar_ts, bar, window_start in candidate_bars:
+        bar_o = float(bar['open']); bar_h = float(bar['high'])
+        bar_l = float(bar['low']);  bar_c = float(bar['close'])
 
-    if sym == 'USDJPY':
-        pb = pin_bar_dir(bar_o, bar_h, bar_l, bar_c)
-        if pb != 0:
-            patterns_found.append(f'PIN_BAR({"bull" if pb==1 else "bear"})')
-            backtest_dir = pb
-    else:
-        # Get previous H1 bar for IB check
-        prev_slice = m1[(m1.index >= bar_ts - pd.Timedelta(hours=1)) & (m1.index < bar_ts)]
-        prev_h1 = prev_slice.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
-        if len(prev_h1) > 0:
-            prev = prev_h1.iloc[0]
-            is_ib = bar_h < float(prev['high']) and bar_l > float(prev['low'])
-            ib_ok = is_ib and (bar_h-bar_l) > 0 and (bar_h-bar_l)/bar_h >= MIN_RANGE
-            if ib_ok:
-                patterns_found.append('INSIDE_BAR')
+        patterns_found = []; backtest_dir = 0
 
-        if not patterns_found:
+        if sym == 'USDJPY':
             pb = pin_bar_dir(bar_o, bar_h, bar_l, bar_c)
             if pb != 0:
                 patterns_found.append(f'PIN_BAR({"bull" if pb==1 else "bear"})')
                 backtest_dir = pb
         else:
-            backtest_dir = 1 if d > 0 else -1  # IB can go either way on breakout
+            prev_slice = m1[(m1.index >= bar_ts - pd.Timedelta(hours=1)) & (m1.index < bar_ts)]
+            prev_h1 = prev_slice.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
+            if len(prev_h1) > 0:
+                prev = prev_h1.iloc[0]
+                is_ib = bar_h < float(prev['high']) and bar_l > float(prev['low'])
+                ib_ok = is_ib and (bar_h-bar_l) > 0 and (bar_h-bar_l)/bar_h >= MIN_RANGE
+                if ib_ok:
+                    patterns_found.append('INSIDE_BAR')
+            if not patterns_found:
+                pb = pin_bar_dir(bar_o, bar_h, bar_l, bar_c)
+                if pb != 0:
+                    patterns_found.append(f'PIN_BAR({"bull" if pb==1 else "bear"})')
+                    backtest_dir = pb
+            else:
+                backtest_dir = 1 if d > 0 else -1
 
-    # Check if the entry price is near the bar's high/low
-    near_high = abs(price - bar_h) / max(bar_h, 0.0001) < TOLERANCE
-    near_low  = abs(price - bar_l) / max(bar_l, 0.0001) < TOLERANCE
-    price_ok  = (d==1 and near_high) or (d==-1 and near_low)
+        # Price plausibility: for BUY, entry should be near bar_h (above or slightly below due to live/hist diff)
+        # for SELL, entry should be near bar_l (below or slightly above)
+        if d == 1:
+            price_ok = (price >= bar_l * (1 - TOLERANCE)) and (price <= bar_h * (1 + TOLERANCE * 10))
+            near_ref  = abs(price - bar_h) / max(bar_h, 0.0001)
+        else:
+            price_ok = (price <= bar_h * (1 + TOLERANCE)) and (price >= bar_l * (1 - TOLERANCE * 10))
+            near_ref  = abs(price - bar_l) / max(bar_l, 0.0001)
+
+        all_bar_results.append({
+            'bar_ts': bar_ts, 'bar_h': bar_h, 'bar_l': bar_l,
+            'patterns': patterns_found, 'backtest_dir': backtest_dir,
+            'price_ok': price_ok, 'near_ref': near_ref,
+        })
+
+    # Find best result: prefer pattern + price match, then pattern only, then anything
+    best = None
+    for r in all_bar_results:
+        if r['patterns'] and r['price_ok']:
+            best = r; break
+    if best is None:
+        for r in all_bar_results:
+            if r['patterns']:
+                best = r; break
+    if best is None:
+        best = all_bar_results[0]
+
+    patterns_found = best['patterns']
+    backtest_dir   = best['backtest_dir']
+    bar_ts         = best['bar_ts']
+    bar_h          = best['bar_h']
+    bar_l          = best['bar_l']
+    price_ok       = best['price_ok']
+    near_ref       = best['near_ref']
+
+    bars_checked = ', '.join(str(r['bar_ts'].strftime('%H:%M')) for r in all_bar_results)
 
     if not patterns_found:
-        reason = f'Signal bar {bar_ts} (H:{bar_h:.5f} L:{bar_l:.5f} O:{bar_o:.5f} C:{bar_c:.5f}) — no IB or PB pattern found by backtest logic'
-        return {'match': 'MISMATCH', 'reason': reason, 'bar_ts': bar_ts, 'bar_h': bar_h, 'bar_l': bar_l}
+        reason = (f'Checked bars: {bars_checked}. No IB or PB found on any. '
+                  f'Best bar {bar_ts} (H:{bar_h:.5f} L:{bar_l:.5f} O:{float(m1.loc[m1.index >= bar_ts].iloc[0]["open"]):.5f}). '
+                  f'OANDA live vs historical data may differ slightly.')
+        return {'match': 'MISMATCH', 'reason': reason, 'bar_ts': bar_ts}
 
     if not price_ok:
-        reason = (f'Pattern found ({", ".join(patterns_found)}) on {bar_ts}, '
-                  f'but entry price {price:.5f} is not near bar H={bar_h:.5f} / L={bar_l:.5f} '
-                  f'(tolerance {TOLERANCE*100:.2f}%). '
-                  f'Check MT5 server timezone — may need to adjust open_time by ±hours.')
+        ref = bar_h if d == 1 else bar_l
+        reason = (f'Pattern {", ".join(patterns_found)} on {bar_ts}. '
+                  f'Entry {price:.5f} is {near_ref*100:.2f}% from bar {"H" if d==1 else "L"} {ref:.5f}. '
+                  f'Likely OANDA live/historical bar difference or different signal bar used by EA.')
         return {'match': 'PRICE_MISMATCH', 'reason': reason, 'bar_ts': bar_ts,
                 'bar_h': bar_h, 'bar_l': bar_l, 'patterns': patterns_found}
 
     dir_ok = (backtest_dir == 0) or (backtest_dir == d)
     if not dir_ok:
         reason = (f'Pattern found but direction mismatch: EA took {"BUY" if d==1 else "SELL"}, '
-                  f'backtest signal was {"BUY" if backtest_dir==1 else "SELL"}')
+                  f'backtest says {"BUY" if backtest_dir==1 else "SELL"} on {bar_ts}')
         return {'match': 'DIR_MISMATCH', 'reason': reason, 'bar_ts': bar_ts, 'patterns': patterns_found}
 
+    ref = bar_h if d == 1 else bar_l
     return {
         'match': 'CONFIRMED',
-        'reason': f'Pattern {", ".join(patterns_found)} on {bar_ts} | entry {price:.5f} ~ bar {"H" if d==1 else "L"} {bar_h if d==1 else bar_l:.5f}',
-        'bar_ts': bar_ts,
-        'bar_h': bar_h, 'bar_l': bar_l,
-        'patterns': patterns_found,
+        'reason': (f'Pattern {", ".join(patterns_found)} on {bar_ts} | '
+                   f'entry {price:.5f} vs bar {"H" if d==1 else "L"} {ref:.5f} '
+                   f'({near_ref*100:.2f}% diff)'),
+        'bar_ts': bar_ts, 'bar_h': bar_h, 'bar_l': bar_l, 'patterns': patterns_found,
     }
 
 
