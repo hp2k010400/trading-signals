@@ -1,6 +1,7 @@
 """
 portfolio_ftmo_replay.py  —  Portfolio-level FTMO daily equity test
 OOS 2022-2025 across all 9 instruments simultaneously.
+UPDATED: now uses STRATEGY_BOTH (IB + Pin Bar) to match live EA v2.04.
 
 ChatGPT's key question: "What was the worst intraday equity drawdown on any OOS day,
 including simultaneously open trades, realised losses, spreads and slippage?"
@@ -98,14 +99,23 @@ def collect_trades(k):
                 if pb==1 and b['high']>pb_h:   d=1;  e=pb_h; sl=pb_l; found=True; break
                 elif pb==-1 and b['low']<pb_l: d=-1; e=pb_l; sl=pb_h; found=True; break
         else:
+            # STRATEGY_BOTH: IB first, then pin bar if no IB fired
             prev=h1.iloc[i-1]
-            if not (bar['high']<prev['high'] and bar['low']>prev['low']): continue
             ib_h=float(bar['high']); ib_l=float(bar['low'])
-            if (ib_h-ib_l)<=0 or (ib_h-ib_l)/ib_h<MIN_RANGE: continue
-            for j in range(len(window)):
-                b=window.iloc[j]
-                if b['high']>ib_h:  d=1;  e=ib_h; sl=ib_l; found=True; break
-                elif b['low']<ib_l: d=-1; e=ib_l; sl=ib_h; found=True; break
+            is_ib=bar['high']<prev['high'] and bar['low']>prev['low']
+            ib_ok=is_ib and (ib_h-ib_l)>0 and (ib_h-ib_l)/ib_h>=MIN_RANGE
+            if ib_ok:
+                for j in range(len(window)):
+                    b=window.iloc[j]
+                    if b['high']>ib_h:  d=1;  e=ib_h; sl=ib_l; found=True; break
+                    elif b['low']<ib_l: d=-1; e=ib_l; sl=ib_h; found=True; break
+            if not found:
+                pb=pin_bar_dir(float(bar['open']),ib_h,ib_l,float(bar['close']))
+                if pb!=0:
+                    for j in range(len(window)):
+                        b=window.iloc[j]
+                        if pb==1 and b['high']>ib_h:   d=1;  e=ib_h; sl=ib_l; found=True; break
+                        elif pb==-1 and b['low']<ib_l: d=-1; e=ib_l; sl=ib_h; found=True; break
 
         if not found: continue
         sl_dist=abs(e-sl)
