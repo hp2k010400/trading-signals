@@ -1,83 +1,81 @@
 """
-research_momentum_ignition.py
+research_exhaustion_fade.py
 
-HYPOTHESIS 4: Momentum Ignition (post-shock continuation).
+HYPOTHESIS 5: Post-Shock Exhaustion Fade — the direct mirror of
+hypothesis 4 (momentum ignition), same shock-detection criteria,
+direction flipped.
 
-MARKET LOGIC
-------------
-Occasionally a single M1 bar shows an unusually large range AND volume
-spike relative to its own recent local activity — well beyond normal
-noise. This is typically driven by a large informed order, a news
-release, or a stop cascade crossing a liquidity void. Market
-microstructure research on price impact shows that moves carrying real
-informational content tend to keep drifting in the same direction for
-a short period afterward, because the market needs time to fully
-reprice around new information (the order can't all be absorbed
-instantly) — as opposed to a pure noise spike, which has no reason to
-persist.
+WHY THIS, WHY NOW
+-------------------
+Two independent "continuation" hypotheses have now failed with the
+same unusual signature: win rates well under 50% (hypothesis 2's
+post-open continuation: 30-50% WR; hypothesis 4's momentum ignition:
+30-45% WR), not just "no edge" (~50% WR, PF~1.0 before costs) but
+actively losing more than chance would predict. That pattern itself is
+informative: a real coin-flip should land near 50%. Seeing it
+consistently below that across two unrelated mechanisms points toward
+genuine short-horizon mean reversion being present in this data, not
+just noise.
 
-This is a DIFFERENT mechanism from hypothesis 1 (liquidity sweep),
-which explicitly bets a level-break FAILS and reverts. Momentum
-ignition bets a genuine shock, once confirmed as unusually large on
-BOTH range and volume (not just one noisy metric), CONTINUES. No
-reference level required, no compression precursor required — this is
-about the shock itself, not what preceded it.
+This hypothesis tests that directly: a large range+volume shock bar is
+often a liquidity-taking / exhaustion event — an aggressive order or
+stop cascade that temporarily pushes price further than genuine
+supply/demand supports, which liquidity providers then fade, producing
+a short-term reversion. This is the classic "climax bar" concept, and
+it has a real mechanism behind it (liquidity provision economics), not
+just "hypothesis 4 lost so try the opposite."
 
-FALSIFIABLE PREDICTION: if this is real, entering in the direction of
-a genuine (large range + large volume) shock should show positive
-expectancy over the following minutes/hours, clearing well above the
-already-disproven baseline. If the "genuine shock" filter doesn't do
-better than an ordinary big-range bar with no volume confirmation,
-that's evidence volume isn't adding real information here and the
-whole thing is likely noise-chasing.
+DEVIL'S ADVOCATE CONCERN — STATED BEFORE RUNNING, NOT AFTER
+--------------------------------------------------------------
+The most likely alternative explanation for hypothesis 4's losses is
+NOT genuine exhaustion reversion — it's bid-ask bounce: consecutive
+1-minute closes can show artificial negative autocorrelation purely
+from price oscillating between bid and ask, which would make
+"continuation loses" look identical to "fading wins" without either
+being a real, tradeable edge. The realistic cost model already in use
+(actual spread+slippage+commission / actual stop distance) is exactly
+the test that should kill a bid-ask-bounce artifact once you have to
+pay the spread to trade it. If this hypothesis clears PF>1.3 AFTER
+that realistic cost model, that's meaningful evidence against the
+bounce explanation. If it only works with costs stripped out, that
+confirms the bounce explanation and this gets discarded too.
 
 SIGNAL DEFINITION
 ------------------
-1. M1 bars only (no H1/H4 resampling — this is a fast, short-horizon
-   effect).
-2. Rolling thresholds computed via pandas' native `.rolling().quantile()`
-   (vectorized, not a Python-level rolling apply — that would be far
-   too slow at M1 resolution over 8 years) and SHIFTED by 1 bar so the
-   threshold never includes the bar being tested (no look-ahead).
-3. Ignition bar = range > rolling RANGE_PCTL threshold of trailing
-   LOOKBACK bars AND tick_volume > rolling VOL_PCTL threshold of the
-   same window (volume confirmation is the whole point — a big range
-   bar on thin volume is just a gap/noise, not a genuine shock).
-4. Only scanned during the liquid window 06:00-20:00 UTC — outside
-   that, a "big" bar is more likely a liquidity-void artifact than a
-   real informed shock.
-5. Direction = sign(close - open) of the ignition bar.
-6. Entry = close of the ignition bar, in that direction.
-7. Stop = opposite extreme of the ignition bar (its low if long, high
-   if short) plus a small buffer — a genuine informational move
-   shouldn't fully retrace through its own origin bar.
-8. Exit = fixed R target (TP_GRID) or TIME_STOP_MIN minutes (short —
-   this is a fast-decaying drift, not a multi-hour trend trade).
-9. Max MAX_PER_DAY signals per instrument per day.
+Identical shock detection to hypothesis 4 (range + volume both in top
+percentile of trailing local activity, liquid session hours only,
+vectorized rolling().quantile().shift(1) thresholds, no look-ahead).
+Only the trade direction is flipped: fade the shock bar's own
+direction instead of following it. Stop sits beyond the ignition bar's
+OWN extreme in the trade's risk direction (i.e. for a fade-short after
+an up-shock, stop is above the ignition bar's high, since a genuine
+reversal shouldn't need to revisit the shock's own extreme).
 
-If tick_volume isn't available in a given file, this script says so
-explicitly and falls back to range-only (clearly weaker, flagged in
-output) rather than silently pretending volume was checked.
+Includes the same MIN_SL_COST_MULT stale-data guard added to
+research_momentum_ignition.py after NATGAS showed WR=0.7%/Exp(R)=-5.76
+in the first coarse run — a near-zero-range stale bar exploding into a
+huge R-multiple once divided by its own tiny stop distance, not a real
+result.
 
-COSTS: round-trip price cost / each trade's actual stop distance, same
-convention as the other three research scripts.
+COSTS: round-trip price cost / actual stop distance, same convention
+as every other research script here.
 
 Run in Codespaces (needs *_M1_ftmo.csv):
-    python -u research_momentum_ignition.py
+    python -u research_exhaustion_fade.py
 """
 import pandas as pd
 import numpy as np
 import os, warnings
 warnings.filterwarnings('ignore')
 
-# ── Config ───────────────────────────────────────────────────────────────────
-LOOKBACK        = 500     # M1 bars (~8h of trailing local activity)
+# ── Config (identical to research_momentum_ignition.py for a clean A/B) ──────
+LOOKBACK        = 500
 RANGE_PCTL_GRID = [0.95, 0.98]
 VOL_PCTL        = 0.95
 SESSION_START_UTC = 6
 SESSION_END_UTC   = 20
-STOP_BUFFER_FRAC  = 0.10  # fraction of the ignition bar's own range
-MIN_SL_COST_MULT  = 3.0   # skip signals whose stop is < 3x round-trip cost (stale-data guard)
+STOP_BUFFER_FRAC  = 0.10
+MIN_SL_COST_MULT  = 3.0
 TIME_STOP_MIN     = [60, 120]
 TP_GRID           = [1.5, 2.0, 3.0]
 MAX_PER_DAY       = 3
@@ -168,22 +166,19 @@ def detect_and_simulate(k, range_pctl, tp_r, time_stop_min):
         d = idx[i].date()
         if day_count.get(d, 0) >= MAX_PER_DAY:
             continue
-        direction = 1 if cl[i] > op[i] else (-1 if cl[i] < op[i] else 0)
-        if direction == 0:
+        shock_dir = 1 if cl[i] > op[i] else (-1 if cl[i] < op[i] else 0)
+        if shock_dir == 0:
             continue
+        direction = -shock_dir  # FADE the shock, not follow it
+
         entry = cl[i]
         buf = rng[i] * STOP_BUFFER_FRAC
-        stop = lo[i] - buf if direction == 1 else hi[i] + buf
+        # stop beyond the ignition bar's OWN extreme, on the trade's risk side
+        stop = hi[i] + buf if direction == -1 else lo[i] - buf
         sl_dist = abs(entry - stop)
         cost_price_i = COST_PRICE[k] * SLIPPAGE_MULT.get(k, 1.0)
         if sl_dist < cost_price_i * MIN_SL_COST_MULT:
-            # stop tighter than a few multiples of round-trip cost -- almost
-            # always a stale/near-zero-range artifact bar, not a real signal.
-            # Dividing subsequent normal moves by a near-zero stop explodes
-            # the R-multiple (this is what caused NATGAS to show WR=0.7%,
-            # Exp(R)=-5.76 in the first coarse run -- a data-artifact bug,
-            # not a market finding).
-            continue
+            continue  # stale/near-zero-range artifact guard, see docstring
 
         tp = entry + sl_dist * tp_r if direction == 1 else entry - sl_dist * tp_r
         end = min(i + 1 + time_stop_min, n)
@@ -233,7 +228,7 @@ for k in loaded:
     print(f'  {k}: {_m1[k].index[0].date()} -> {_m1[k].index[-1].date()}  ({len(_m1[k]):,} bars)  [{vol_note}]')
 
 # ── Coarse pass ───────────────────────────────────────────────────────────────
-print(f'\n{"="*78}\n  HYPOTHESIS 4 - MOMENTUM IGNITION (POST-SHOCK CONTINUATION)\n{"="*78}')
+print(f'\n{"="*78}\n  HYPOTHESIS 5 - POST-SHOCK EXHAUSTION FADE\n{"="*78}')
 
 for range_pctl in RANGE_PCTL_GRID:
     for time_stop_min in TIME_STOP_MIN:
@@ -251,9 +246,9 @@ for range_pctl in RANGE_PCTL_GRID:
 print(f'\n{"="*78}')
 print('Coarse pass done. Decision rule (frozen before running):')
 print('  ACCEPT for full validation pipeline only if OOS combined PF > 1.3 for')
-print('  at least one (range_pctl, time_stop, TP) combination, that result is')
-print('  part of a plateau across neighbouring cells (not an isolated spike in')
-print('  a 12-cell grid), AND >=6/9 instruments individually OOS-profitable at')
-print('  that combination.')
-print('  Otherwise: discard, do not cherry-pick the best cell.')
+print('  at least one (range_pctl, time_stop, TP) combination, part of a')
+print('  plateau across neighbouring cells (not an isolated spike), AND >=6/9')
+print('  instruments individually OOS-profitable at that combination.')
+print('  If it only clears 1.3 with costs stripped out but not with them,')
+print('  that confirms the bid-ask-bounce concern above -- reject.')
 print(f'{"="*78}')
