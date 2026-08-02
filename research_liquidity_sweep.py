@@ -84,15 +84,15 @@ TIME_STOP_BARS = 240        # 4h time stop
 TP_GRID       = [1.5, 2.0, 3.0]
 
 FILES = {
-    'DAX':    'GER40_M1_oanda.csv',
-    'NAS100': 'US100_M1_oanda.csv',
-    'SP500':  'US500_M1_oanda.csv',
-    'US30':   'US30_M1_oanda.csv',
-    'EURUSD': 'EURUSD_M1_oanda.csv',
-    'GBPUSD': 'GBPUSD_M1_oanda.csv',
-    'USDJPY': 'USDJPY_M1_oanda.csv',
-    'GOLD':   'XAUUSD_M1_oanda.csv',
-    'NATGAS': 'NATGAS_M1_oanda.csv',
+    'DAX':    'GER40_M1_ftmo.csv',
+    'NAS100': 'US100_M1_ftmo.csv',
+    'SP500':  'US500_M1_ftmo.csv',
+    'US30':   'US30_M1_ftmo.csv',
+    'EURUSD': 'EURUSD_M1_ftmo.csv',
+    'GBPUSD': 'GBPUSD_M1_ftmo.csv',
+    'USDJPY': 'USDJPY_M1_ftmo.csv',
+    'GOLD':   'XAUUSD_M1_ftmo.csv',
+    'NATGAS': 'NATGAS_M1_ftmo.csv',
 }
 
 # Round-trip execution cost in PRICE units: spread + slippage + commission-equiv.
@@ -123,8 +123,18 @@ def load(k):
     if not os.path.exists(fn):
         return False
     df = pd.read_csv(fn, on_bad_lines='skip')
-    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
-    df = df.set_index('time').sort_index()
+    cols = {c.lower(): c for c in df.columns}
+    need = ['time', 'open', 'high', 'low', 'close']
+    if not all(c in cols for c in need):
+        print(f'  {k}: UNEXPECTED SCHEMA {list(df.columns)} — skipping, needs mapping')
+        return False
+    df = df.rename(columns={cols[c]: c for c in need})
+    ts = pd.to_numeric(df['time'], errors='coerce')
+    if ts.notna().mean() > 0.99:
+        df['time'] = pd.to_datetime(ts, unit='s', utc=True)
+    else:
+        df['time'] = pd.to_datetime(df['time'], utc=True, errors='coerce')
+    df = df.dropna(subset=['time']).set_index('time').sort_index()
     for c in ['open', 'high', 'low', 'close']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
     df = df.dropna()
@@ -271,7 +281,7 @@ loaded = [k for k in FILES if load(k)]
 missing = [k for k in FILES if k not in loaded]
 print(f'Loaded {len(loaded)}/9: {loaded}')
 if missing:
-    print(f'MISSING (run download_oanda.py first): {missing}')
+    print(f'MISSING or unreadable *_M1_ftmo.csv: {missing}')
 for k in loaded:
     print(f'  {k}: {_m1[k].index[0].date()} -> {_m1[k].index[-1].date()}  ({len(_m1[k]):,} bars)')
 
