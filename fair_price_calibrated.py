@@ -41,7 +41,7 @@ FTMO_TOTAL  = 0.10
 MC_RUNS = 5000
 MAX_SIM_DAYS = 500
 
-RR = 1.5
+RR = 1.2   # switched from 1.5 -- sensitivity sweep showed 1.2 consistently stronger (IS PF 1.72 vs 1.50)
 REVERSION_WINDOW_MIN = 90
 MAX_HOLD_MIN = 240
 
