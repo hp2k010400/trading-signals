@@ -26,7 +26,7 @@ RISK_PCT = 0.08
 COST_MULT = 1.5   # the realistic middle scenario from the calibrated run
 START_BAL = 70000.0
 
-RR = 1.5
+RR = 1.2   # switched from 1.5 -- sensitivity sweep showed 1.2 consistently stronger (IS PF 1.72 vs 1.50)
 REVERSION_WINDOW_MIN = 90
 MAX_HOLD_MIN = 240
 
