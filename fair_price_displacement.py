@@ -49,6 +49,8 @@ MIN_DISPLACEMENT_PCT = 0.0004   # body must be >= 0.04% of price -- filters out 
                                   # "displacement" candles that a human would never actually
                                   # mark on a chart; without this, tiny-range candles get tiny
                                   # stops and fixed point-costs swamp the R calculation
+RUN_CONT = False   # CONT already confirmed clean, PF 0.79-0.85, losing everywhere --
+                    # skip it to save time; this run is just re-verifying REVERSION
 
 SESSIONS = {
     'ASIAN':  0,
@@ -139,7 +141,9 @@ def find_trades(symbol, session_name, session_hour):
             cont_direction = 1 if o_close > o_open else -1
 
         # --- SUB-STRATEGY A: continuation breakout of the opening candle ---
-        if cont_direction != 0 and o_open > 0 and (o_high - o_low) / o_open >= MIN_DISPLACEMENT_PCT:
+        # (already confirmed clean and losing PF 0.79-0.85 -- skipped by default to
+        # save time on re-runs; set RUN_CONT=True at the top to include it again)
+        if RUN_CONT and cont_direction != 0 and o_open > 0 and (o_high - o_low) / o_open >= MIN_DISPLACEMENT_PCT:
             watch_start = session_start + pd.Timedelta(minutes=5)
             watch_end = watch_start + pd.Timedelta(minutes=CONT_WATCH_MIN)
             watch = m1[(m1_index >= watch_start) & (m1_index < watch_end)]
