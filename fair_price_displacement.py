@@ -95,6 +95,8 @@ def simulate_forward(m1, m1_index, entry_index, direction, entry_price, stop_pri
     lows  = future['low'].values
     closes = future['close'].values
     stop_distance = abs(entry_price - stop_price)
+    if stop_distance <= 0:
+        return 0.0, 'SL'   # defensive -- should be unreachable, callers already guard this
     for k in range(len(future)):
         if direction == 1:
             if highs[k] >= tp_price:
@@ -202,6 +204,8 @@ def find_trades(symbol, session_name, session_hour):
                 continue
             entry_idx += 1   # enter at the NEXT bar's open -- no same-bar lookahead
             entry_price = float(m1['open'].iloc[entry_idx])
+            if abs(entry_price - stop_price) <= 0:
+                continue   # gapped exactly onto the stop level -- degenerate, skip
             tp_price = entry_price + stop_dist * RR if direction == 1 else entry_price - stop_dist * RR
 
             r, reason = simulate_forward(m1, m1_index, entry_idx, direction, entry_price,
