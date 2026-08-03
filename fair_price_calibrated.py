@@ -232,12 +232,14 @@ print(f'  {"Cost stress":>12}  {"PASSED":>8}  {"FAILED_DAILY":>13}  {"FAILED_TOT
       f'{"Median days":>12}  {"Median months":>14}')
 print(f'  {"-"*88}')
 
+all_outcomes = {}
 for cost_mult in COST_MULTIPLIERS:
     rpt = RISK_PCT / 100.0
     rng = np.random.default_rng(7)
     results = [simulate_one(rng, rpt, cost_mult, BLOCK_DAYS, by_day_gross, by_day_cost, n_days)
                for _ in range(MC_RUNS)]
     outcomes = pd.DataFrame(results, columns=['outcome', 'days', 'final_equity'])
+    all_outcomes[cost_mult] = outcomes
     n_pass = (outcomes['outcome'] == 'PASSED').sum()
     n_daily = (outcomes['outcome'] == 'FAILED_DAILY').sum()
     n_total = (outcomes['outcome'] == 'FAILED_TOTAL').sum()
@@ -251,4 +253,22 @@ for cost_mult in COST_MULTIPLIERS:
 print(f'{"="*90}')
 print('\n"1.0x real" = pure real spread, zero slippage assumed -- unrealistic best case.')
 print('"1.5x/2.0x real" = real spread plus slippage adding 50-100% on top -- more realistic range.')
+
+MONTH_MARKS = [1, 2, 3, 4, 6]
+print(f'\n{"="*90}')
+print(f'  MONTHLY PASS-RATE BREAKDOWN (% of all {MC_RUNS:,} simulated accounts passed BY end of month N)')
+print(f'{"="*90}')
+print(f'  {"Cost stress":>12}' + ''.join(f'{"By month "+str(m):>14}' for m in MONTH_MARKS))
+print(f'  {"-"*88}')
+for cost_mult in COST_MULTIPLIERS:
+    outcomes = all_outcomes[cost_mult]
+    passed = outcomes[outcomes['outcome'] == 'PASSED']
+    row = f'  {cost_mult:.1f}x real'.ljust(14)
+    for m in MONTH_MARKS:
+        day_limit = m * 30.44
+        pct = (passed['days'] <= day_limit).sum() / MC_RUNS * 100
+        row += f'{pct:>13.1f}%'
+    print(row)
+print(f'  {"-"*88}')
+
 print('\nDone.')
