@@ -45,6 +45,10 @@ RR = 1.5                    # his stated 1:1.5 risk:reward, applied to every tra
 REVERSION_WINDOW_MIN = 90   # minutes 5-90 after session open
 CONT_WATCH_MIN = 30         # how long to watch for the opening breakout to trigger
 MAX_HOLD_MIN = 240          # outer safety cap so no trade waits forever to resolve
+MIN_DISPLACEMENT_PCT = 0.0004   # body must be >= 0.04% of price -- filters out sub-noise
+                                  # "displacement" candles that a human would never actually
+                                  # mark on a chart; without this, tiny-range candles get tiny
+                                  # stops and fixed point-costs swamp the R calculation
 
 SESSIONS = {
     'ASIAN':  0,
@@ -133,7 +137,7 @@ def find_trades(symbol, session_name, session_hour):
             cont_direction = 1 if o_close > o_open else -1
 
         # --- SUB-STRATEGY A: continuation breakout of the opening candle ---
-        if cont_direction != 0:
+        if cont_direction != 0 and o_open > 0 and (o_high - o_low) / o_open >= MIN_DISPLACEMENT_PCT:
             watch_start = session_start + pd.Timedelta(minutes=5)
             watch_end = watch_start + pd.Timedelta(minutes=CONT_WATCH_MIN)
             watch = m1[(m1_index >= watch_start) & (m1_index < watch_end)]
@@ -179,6 +183,9 @@ def find_trades(symbol, session_name, session_hour):
             body_prev = abs(bodies[i-1])
             if body_cur <= body_prev:
                 continue   # not a displacement candle -- his literal rule, no exceptions
+            px = float(closes[i])
+            if px <= 0 or body_cur / px < MIN_DISPLACEMENT_PCT:
+                continue   # too small to be a real displacement, just noise
 
             direction = 1 if closes[i] > opens[i] else (-1 if closes[i] < opens[i] else 0)
             if direction == 0:
