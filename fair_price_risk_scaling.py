@@ -31,7 +31,7 @@ warnings.filterwarnings('ignore')
 MIN_DISPLACEMENT_PCT = 0.0010
 RR = 1.2
 COST_MULT = 1.5   # realistic middle stress scenario, fixed throughout this sweep
-RISK_SWEEP = [0.08, 0.12, 0.16, 0.20, 0.24]
+RISK_SWEEP = [0.08, 0.12, 0.16, 0.20, 0.24, 0.30, 0.40, 0.50, 0.75, 1.00]
 BLOCK_DAYS = 5
 START_BAL = 70000.0
 FTMO_TARGET = 0.10
