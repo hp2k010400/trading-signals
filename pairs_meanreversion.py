@@ -48,12 +48,20 @@ FILES = {
     'US30':  'US30_M1_oanda.csv',
     'EURUSD':'EURUSD_M1_oanda.csv',
     'GBPUSD':'GBPUSD_M1_oanda.csv',
+    'USDJPY':'USDJPY_M1_oanda.csv',
 }
 COST_POINTS = {
     'DAX':1.33, 'NAS100':1.5, 'SP500':0.6, 'US30':2.0,
-    'EURUSD':0.0001, 'GBPUSD':0.00003,
+    'EURUSD':0.0001, 'GBPUSD':0.00003, 'USDJPY':0.011,
 }
-PAIRS = [('NAS100', 'SP500'), ('US30', 'SP500'), ('DAX', 'SP500'), ('EURUSD', 'GBPUSD')]
+# expanded from the original 4 to all economically sensible combinations --
+# 6 equity-index pairs + 3 FX pairs -- to genuinely increase the holdout
+# sample using data already available, rather than waiting for more history
+PAIRS = [
+    ('DAX', 'NAS100'), ('DAX', 'SP500'), ('DAX', 'US30'),
+    ('NAS100', 'SP500'), ('NAS100', 'US30'), ('SP500', 'US30'),
+    ('EURUSD', 'GBPUSD'), ('EURUSD', 'USDJPY'), ('GBPUSD', 'USDJPY'),
+]
 
 _daily = {}
 
