@@ -183,4 +183,29 @@ for symbol in loaded:
     ratio = f'{n_ny/n_london:.1f}x' if n_london > 0 else 'inf' if n_ny > 0 else 'n/a'
     print(f'  {symbol:<10}{n_london:>12}{n_ny:>12}{ratio:>20}')
 
+# ============================================================
+#  PART 3: COMBINED (LONDON + NY) DAILY TRADE COUNT DISTRIBUTION
+# ============================================================
+print(f'\n{"#"*90}')
+print(f'  PART 3: COMBINED (LONDON + NY) DAILY TRADE COUNT -- full live system')
+print(f'{"#"*90}')
+
+combined = pd.concat([session_trades['LONDON'], session_trades['NY']], ignore_index=True)
+combined['day'] = combined['entry_time'].dt.date
+min_day = combined['entry_time'].min().normalize()
+max_day = combined['entry_time'].max().normalize()
+all_weekdays = pd.date_range(min_day, max_day, freq='D')
+all_weekdays = [d.date() for d in all_weekdays if d.dayofweek < 5]
+counts_by_day = combined.groupby('day').size()
+daily_counts = pd.Series([counts_by_day.get(d, 0) for d in all_weekdays], index=all_weekdays)
+
+print(f'  Days covered:      {len(daily_counts)} ({min_day.date()} -> {max_day.date()})')
+print(f'  Mean trades/day:   {daily_counts.mean():.2f}')
+print(f'  Median trades/day: {daily_counts.median():.1f}')
+print(f'  Lowest trades/day: {daily_counts.min()}')
+print(f'  Highest trades/day:{daily_counts.max():>3}   (on {daily_counts.idxmax()})')
+print(f'  Zero-trade days:   {(daily_counts==0).sum()}/{len(daily_counts)} ({(daily_counts==0).sum()/len(daily_counts)*100:.1f}%)')
+print(f'\n  Percentiles: 10th={daily_counts.quantile(0.10):.0f}  25th={daily_counts.quantile(0.25):.0f}  '
+      f'75th={daily_counts.quantile(0.75):.0f}  90th={daily_counts.quantile(0.90):.0f}')
+
 print('\nDone.')
