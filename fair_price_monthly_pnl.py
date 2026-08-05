@@ -268,6 +268,12 @@ if len(passed) > 0:
     print(f'  Mean days to pass:   {passed["days"].mean():.1f}')
     print(f'  Median days to pass: {passed["days"].median():.0f}')
     print(f'  Fastest pass: {passed["days"].min():.0f} days   Slowest pass: {passed["days"].max():.0f} days')
+    print(f'\n  Percentiles (days to pass):')
+    for p in [50, 75, 90, 95, 99]:
+        print(f'    {p}th percentile: {passed["days"].quantile(p/100):.0f} days')
+    for thresh in [21, 30, 45, 60]:
+        pct_over = (passed['days'] > thresh).sum() / len(passed) * 100
+        print(f'  % of passing runs taking MORE than {thresh} days: {pct_over:.2f}%')
 else:
     print('  No passing runs in this sample.')
 
