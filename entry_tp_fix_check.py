@@ -137,8 +137,11 @@ def find_reversion_trades(symbol, session_hour, fixed):
             tp_price = entry_price + stop_dist_used * RR if direction == 1 else entry_price - stop_dist_used * RR
             r_gross = simulate_forward(m1, m1_index, entry_idx, direction, entry_price,
                                         stop_price, tp_price, MAX_HOLD_MIN)
-            # cost normalized against the TRUE risk either way -- cost model itself isn't the bug
-            cost_r = COST_POINTS[symbol] / true_stop_dist * COST_MULT
+            # BUGFIX: cost must stay pinned to stop_dist_stale to match the actually-validated
+            # baseline everywhere else tonight -- dividing by true_stop_dist (which can be tiny
+            # when the next bar's open lands close to the stop) blows cost_r up artificially,
+            # exactly the same failure mode fixed earlier in fair_price_displacement.py
+            cost_r = COST_POINTS[symbol] / stop_dist_stale * COST_MULT
             trades.append({'symbol': symbol, 'entry_time': m1_index[entry_idx], 'r_net': r_gross - cost_r})
             busy_until = m1_index[entry_idx] + pd.Timedelta(minutes=1)
     return trades
