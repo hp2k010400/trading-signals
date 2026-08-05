@@ -9,10 +9,15 @@ OANDA history. Each month is simulated starting fresh from £70,000 (not
 compounding across months) so months from different points in history
 are comparable on equal footing.
 
-Same locked configuration: 0.10% displacement threshold, NY+London
-sessions, 1:1.5 R:R, 0.08% risk/trade, real-spread-calibrated costs at
-1.5x (the realistic middle stress scenario -- real spread plus ~50%
-slippage on top).
+Same locked configuration as the live EA: 0.10% displacement threshold,
+NY+London sessions, 1:1.2 R:R, 0.30% risk/trade (the actual live
+setting), real-spread-calibrated costs at 1.5x (the realistic middle
+stress scenario -- real spread plus ~50% slippage on top).
+
+Also adds a Monte Carlo days-to-pass summary (mean/median) at the end,
+using the same day-bundled bootstrap as fair_price_final_stress_test.py,
+so the monthly P&L view and the FTMO-challenge-speed view sit side by
+side in one report.
 
 Run in Codespace: python -u fair_price_monthly_pnl.py
 """
@@ -22,9 +27,15 @@ import os, warnings
 warnings.filterwarnings('ignore')
 
 MIN_DISPLACEMENT_PCT = 0.0010
-RISK_PCT = 0.08
+RISK_PCT = 0.30   # the actual live setting
 COST_MULT = 1.5   # the realistic middle scenario from the calibrated run
 START_BAL = 70000.0
+BLOCK_DAYS = 5
+FTMO_TARGET = 0.10
+FTMO_DAILY  = 0.05
+FTMO_TOTAL  = 0.10
+MC_RUNS = 5000
+MAX_SIM_DAYS = 500
 
 RR = 1.2   # switched from 1.5 -- sensitivity sweep showed 1.2 consistently stronger (IS PF 1.72 vs 1.50)
 REVERSION_WINDOW_MIN = 90
@@ -206,5 +217,58 @@ for _, r in monthly.nsmallest(5, 'pnl_gbp').iterrows():
 print(f'\n  Full month-by-month (year-month, £pnl, %, trades):')
 for _, r in monthly.iterrows():
     print(f'    {r["month"]}  £{r["pnl_gbp"]:>+9,.0f}  {r["pnl_pct"]:>+6.2f}%  N={r["trades"]:.0f}')
+
+# ============================================================
+#  MONTE CARLO -- DAYS TO PASS AN FTMO CHALLENGE AT THIS RISK
+# ============================================================
+print(f'\n{"="*70}')
+print(f'  MONTE CARLO -- DAYS TO PASS (Risk={RISK_PCT}%, Cost={COST_MULT}x)')
+print(f'{"="*70}')
+
+df['day'] = df['entry_time'].dt.date
+days_sorted = sorted(df['day'].unique())
+day_index = {d: i for i, d in enumerate(days_sorted)}
+n_days = len(days_sorted)
+by_day = [None] * n_days
+for d, g in df.groupby('day'):
+    by_day[day_index[d]] = g['r_net'].values
+
+def simulate_one(rng):
+    equity = START_BAL
+    day_i = 0
+    while day_i < MAX_SIM_DAYS:
+        start = rng.integers(0, max(1, n_days - BLOCK_DAYS))
+        for b in range(BLOCK_DAYS):
+            idx = start + b
+            if idx >= n_days:
+                break
+            day_start_equity = equity
+            for r in by_day[idx]:
+                equity += equity * rpt * r
+            daily_loss = (day_start_equity - equity) / START_BAL
+            if daily_loss > FTMO_DAILY:
+                return 'FAILED_DAILY', day_i + 1
+            if (START_BAL - equity) / START_BAL > FTMO_TOTAL:
+                return 'FAILED_TOTAL', day_i + 1
+            if (equity - START_BAL) / START_BAL >= FTMO_TARGET:
+                return 'PASSED', day_i + 1
+            day_i += 1
+            if day_i >= MAX_SIM_DAYS:
+                break
+    return 'TIMEOUT', MAX_SIM_DAYS
+
+rng = np.random.default_rng(7)
+results = [simulate_one(rng) for _ in range(MC_RUNS)]
+outcomes = pd.DataFrame(results, columns=['outcome', 'days'])
+n_pass = (outcomes['outcome']=='PASSED').sum()
+passed = outcomes[outcomes['outcome']=='PASSED']
+
+print(f'  Pass rate: {n_pass}/{MC_RUNS} ({n_pass/MC_RUNS*100:.2f}%)')
+if len(passed) > 0:
+    print(f'  Mean days to pass:   {passed["days"].mean():.1f}')
+    print(f'  Median days to pass: {passed["days"].median():.0f}')
+    print(f'  Fastest pass: {passed["days"].min():.0f} days   Slowest pass: {passed["days"].max():.0f} days')
+else:
+    print('  No passing runs in this sample.')
 
 print('\nDone.')
