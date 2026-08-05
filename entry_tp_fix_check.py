@@ -197,13 +197,19 @@ def find_reversion_trades_FIXED(symbol, session_hour):
                 continue
             entry_idx += 1
             entry_price = float(m1['open'].iloc[entry_idx])
-            true_stop_dist = abs(entry_price - stop_price)   # ONLY CHANGE: recompute, don't reuse stop_dist
-            if true_stop_dist <= 0:
+            true_stop_dist = abs(entry_price - stop_price)   # recompute, don't reuse stop_dist
+            # same safety floor already used to filter degenerate signal candles --
+            # without this, a true_stop_dist that happens to land very close to zero
+            # (next bar's open landing near the stop level) blows cost_r up artificially,
+            # exactly the failure mode already fixed once tonight
+            if true_stop_dist <= 0 or true_stop_dist / entry_price < MIN_DISPLACEMENT_PCT:
                 continue
             tp_price = entry_price + true_stop_dist * RR if direction == 1 else entry_price - true_stop_dist * RR
             r_gross = simulate_forward(m1, m1_index, entry_idx, direction, entry_price,
                                         stop_price, tp_price, MAX_HOLD_MIN)
-            cost_r = COST_POINTS[symbol] / stop_dist * COST_MULT   # cost stays on the ORIGINAL stop_dist, unchanged
+            # cost must also be normalized against true_stop_dist here -- "R" has to mean the
+            # same unit of true risk for both reward and cost, or the two aren't comparable
+            cost_r = COST_POINTS[symbol] / true_stop_dist * COST_MULT
             trades.append({'symbol': symbol, 'entry_time': m1_index[entry_idx], 'r_net': r_gross - cost_r})
             busy_until = m1_index[entry_idx] + pd.Timedelta(minutes=1)
     return trades
