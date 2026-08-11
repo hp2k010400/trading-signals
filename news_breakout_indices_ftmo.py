@@ -54,18 +54,30 @@ FILES = {
     'EU50':  'EU50_M1_ftmo.csv',
     'US2000':'US2000_M1_ftmo.csv',
     'HK50':  'HK50_M1_ftmo.csv',
+    'WTIOIL':  'WTIOIL_M1_ftmo.csv',
+    'BRENTOIL':'BRENTOIL_M1_ftmo.csv',
+    'SILVER':  'SILVER_M1_ftmo.csv',
+    'COPPER':  'COPPER_M1_ftmo.csv',
+    'PLATINUM':'PLATINUM_M1_ftmo.csv',
+    'PALLADIUM':'PALLADIUM_M1_ftmo.csv',
+    'USDINDEX':'USDINDEX_M1_ftmo.csv',
 }
 COST_POINTS = {
     'DAX':1.33, 'NAS100':1.5, 'SP500':0.6, 'US30':2.0, 'UK100':1.8, 'NATGAS':0.008,
     # UNCALIBRATED ESTIMATES -- same caveat as the lesser-traded FX crosses,
-    # never pulled real spreads from live Market Watch for these 6
+    # never pulled real spreads from live Market Watch for these instruments
     'FRA40':1.5, 'JP225':8.0, 'AUS200':2.0, 'EU50':1.2, 'US2000':0.4, 'HK50':10.0,
+    'WTIOIL':0.04, 'BRENTOIL':0.04, 'SILVER':0.025, 'COPPER':0.008,
+    'PLATINUM':0.5, 'PALLADIUM':2.0, 'USDINDEX':0.02,
 }
 # US macro news moves global equities regardless of which country they're
 # listed in (real, well-established mechanism, not a stretch) -- so every
 # index reacts to USD releases in addition to its own home currency's.
+# Oil/Silver/Copper/Platinum/Palladium are USD-priced commodities, and the
+# US Dollar Index is a direct USD basket -- all react to USD macro too.
 CURRENCY_MAP = {
-    'USD': ['NAS100','SP500','US30','US2000','DAX','UK100','FRA40','EU50','JP225','AUS200','HK50'],
+    'USD': ['NAS100','SP500','US30','US2000','DAX','UK100','FRA40','EU50','JP225','AUS200','HK50',
+             'WTIOIL','BRENTOIL','SILVER','COPPER','PLATINUM','PALLADIUM','USDINDEX'],
     'EUR': ['DAX','FRA40','EU50'],
     'GBP': ['UK100'],
     'JPY': ['JP225'],
@@ -92,6 +104,11 @@ def load_price(symbol):
 def is_gas_storage(name):
     n = str(name).upper()
     return ('NATURAL GAS' in n) or ('GAS STORAGE' in n)
+
+
+def is_crude_oil(name):
+    n = str(name).upper()
+    return ('CRUDE OIL' in n) or ('CRUDE INVENTORIES' in n) or ('OIL INVENTORIES' in n)
 
 
 def load_calendar():
@@ -217,10 +234,13 @@ if cal is None:
 print(f'Loaded {len(cal)} calendar events.\n')
 
 cal_gas = cal[cal['event_name'].apply(is_gas_storage)]
-cal_macro = cal[~cal['event_name'].apply(is_gas_storage)]
+cal_oil = cal[cal['event_name'].apply(is_crude_oil)]
+cal_macro = cal[~cal['event_name'].apply(is_gas_storage) & ~cal['event_name'].apply(is_crude_oil)]
 
 events_for_symbol = {s: [] for s in FILES}
 events_for_symbol['NATGAS'] = list(cal_gas['time'])
+events_for_symbol['WTIOIL'] = list(cal_oil['time'])
+events_for_symbol['BRENTOIL'] = list(cal_oil['time'])
 for currency, symbols in CURRENCY_MAP.items():
     times = list(cal_macro[cal_macro['currency'] == currency]['time'])
     for s in symbols:
@@ -240,6 +260,7 @@ for symbol in FILES:
     for t in ev_times:
         trade = find_trade_for_event(symbol, m1, h1, t)
         if trade is not None:
+            trade['event_time'] = t   # which calendar event triggered this, for cluster risk-sizing
             all_trades.append(trade)
     del m1, h1
     gc.collect()
@@ -298,14 +319,25 @@ if len(df) > 0:
     # +£809 TRILLION on synthetic-scale trade clustering). Each trade is
     # instead sized off the SAME fixed monthly-starting balance and summed
     # additively -- still real money, just not fantasy compounding.
+    # Risk is also split across correlated same-event trades: a single news
+    # release can fire trades in up to 11 instruments simultaneously (e.g.
+    # DAX/NAS100/SP500/UK100/FRA40/EU50/... all reacting to the same USD
+    # print). Giving each the FULL per-trade risk overstates real exposure
+    # in both directions -- confirmed: worst month was -98.26% (an FTMO
+    # account-ending month) and best was +2322%, both driven by clustered
+    # correlated trades, not genuine independent edge. A real trader can't
+    # take the same bet 11 times over at full size -- the risk budget for
+    # an event is shared across however many instruments react to it.
+    cluster_size = df.groupby('event_time')['symbol'].transform('count')
+    df['risk_frac_pct'] = RISK_PCT / cluster_size
+
     print(f'\n{"#"*90}')
-    print(f'  MONTHLY P&L (each month simulated fresh from £70,000 at {RISK_PCT}% risk, additive not compounded)')
+    print(f'  MONTHLY P&L (each month fresh from £70,000, {RISK_PCT}% risk PER EVENT split across')
+    print(f'  however many correlated instruments react to it, additive not compounded)')
     print(f'{"#"*90}')
-    rpt = RISK_PCT / 100.0
     rows = []
     for period, g in df.groupby('period'):
-        total_r = g['r_net'].sum()
-        pnl = START_BAL * rpt * total_r
+        pnl = START_BAL * (g['r_net'] * g['risk_frac_pct'] / 100.0).sum()
         rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
     monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
     print(f'  Months with activity: {len(monthly)}')
