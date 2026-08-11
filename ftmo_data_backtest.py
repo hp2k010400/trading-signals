@@ -46,12 +46,18 @@ COST_POINTS = {
 
 _m1 = {}
 
+BROKER_UTC_OFFSET_HOURS = 3   # confirmed earlier: FTMO server clock runs UTC+3.
+                               # CopyRates() returns bar times on the broker server
+                               # clock, not true UTC -- the exported CSV timestamps
+                               # are server-time seconds mislabeled as UTC unless
+                               # corrected here.
+
 def load(symbol):
     fn = FILES[symbol]
     if not os.path.exists(fn):
         return False
     df = pd.read_csv(fn, on_bad_lines='skip')
-    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True) - pd.Timedelta(hours=BROKER_UTC_OFFSET_HOURS)
     df = df.set_index('time').sort_index()
     for c in ['open','high','low','close']:
         df[c] = pd.to_numeric(df[c], errors='coerce')

@@ -38,18 +38,25 @@ FILES = {
     'NAS100':'US100_M1_ftmo.csv',
     'SP500': 'US500_M1_ftmo.csv',
     'US30':  'US30_M1_ftmo.csv',
+    'EURUSD':'EURUSD_M1_ftmo.csv',
+    'GBPUSD':'GBPUSD_M1_ftmo.csv',
     'USDJPY':'USDJPY_M1_ftmo.csv',
     'GOLD':  'XAUUSD_M1_ftmo.csv',
 }
 
 _m1 = {}
 
+BROKER_UTC_OFFSET_HOURS = 3   # confirmed earlier: FTMO server clock runs UTC+3.
+                               # CopyRates() returns bar times on the broker server
+                               # clock, not true UTC -- correct it here so entry_time
+                               # lookups line up with the real UTC trade times.
+
 def load(symbol):
     fn = FILES[symbol]
     if not os.path.exists(fn):
         return False
     df = pd.read_csv(fn, on_bad_lines='skip')
-    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True) - pd.Timedelta(hours=BROKER_UTC_OFFSET_HOURS)
     df = df.set_index('time').sort_index()
     for c in ['open','high','low','close']:
         df[c] = pd.to_numeric(df[c], errors='coerce')
