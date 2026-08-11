@@ -227,6 +227,13 @@ def print_row(label, n, wr, pf, tot, width=26):
 
 RISK_PCT = 0.30
 START_BAL = 70000.0
+# Walk-forward showed 2018-2021 uniformly strong (PF 1.4-3.7) but 2022
+# onward mixed/weak (5 of 9 half-year windows losing or barely breakeven).
+# That's an important question: is the edge decaying, or was 2019-2021 just
+# an exceptionally volatile era (COVID crash/recovery, stimulus, meme-stock
+# mania) this vol-breakout mechanism happened to love, unlikely to repeat?
+# This isolates performance on ONLY the recent/current-regime years.
+RECENT_CUTOFF = pd.Timestamp('2022-01-01', tz='UTC')
 
 cal = load_calendar()
 if cal is None:
@@ -281,20 +288,27 @@ if len(df) > 0:
     for _, row in biggest.iterrows():
         print(f'  {row["entry_time"]}  {row["symbol"]:<8}  r_net={row["r_net"]:>+10.3f}')
 
-n, wr, pf, tot = compute_stats(df['r_net'].values) if len(df) else (0,0,0,0)
-print_row('OVERALL', n, wr, pf, tot)
+def report(label, sub_df, loaded_instruments):
+    print(f'\n{"="*90}')
+    print(f'  {label}  (N={len(sub_df)})')
+    print(f'{"="*90}')
+    if len(sub_df) == 0:
+        print('  No trades in this period.')
+        return
+    if len(sub_df) < 80:
+        print('  WARNING: fewer than 80 trades -- treat every number below as unreliable.')
 
-if len(df) > 0:
-    print(f'\n{"#"*90}')
-    print(f'  WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
-    print(f'{"#"*90}')
-    df['period'] = df['entry_time'].dt.to_period('M')
-    all_periods = sorted(df['period'].unique())
+    n, wr, pf, tot = compute_stats(sub_df['r_net'].values)
+    print_row('OVERALL', n, wr, pf, tot)
+
+    print(f'\n  WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
+    periods = sub_df['entry_time'].dt.to_period('M')
+    all_periods = sorted(periods.unique())
     n_losing = 0
     n_total = 0
     for i in range(0, len(all_periods), WALK_FORWARD_MONTHS):
         window_periods = all_periods[i:i+WALK_FORWARD_MONTHS]
-        window_rv = df[df['period'].isin(window_periods)]['r_net'].values
+        window_rv = sub_df[periods.isin(window_periods)]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(window_rv)
         n_total += 1
         if tot2 < 0:
@@ -304,40 +318,30 @@ if len(df) > 0:
     print(f'\n  Losing windows: {n_losing}/{n_total}')
 
     print(f'\n  Per-instrument:')
-    for symbol in loaded:
-        rv = df[df['symbol'] == symbol]['r_net'].values
+    for symbol in loaded_instruments:
+        rv = sub_df[sub_df['symbol'] == symbol]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(rv)
         print_row(f'  {symbol}', n2, wr2, pf2, tot2)
 
-    # Real monthly P&L, each month fresh from £70,000 at 0.30% risk.
-    # NOT compounded trade-to-trade within the month: many of these trades
-    # fire within the same minute (multiple correlated indices reacting to
-    # one shared news event), so sequentially re-sizing risk off a
-    # continuously-updated equity figure implies re-pricing risk in real
-    # time across a dozen simultaneous correlated positions -- unrealistic,
-    # and mathematically explosive (confirmed: produced a "best month" of
-    # +£809 TRILLION on synthetic-scale trade clustering). Each trade is
-    # instead sized off the SAME fixed monthly-starting balance and summed
-    # additively -- still real money, just not fantasy compounding.
-    # Risk is also split across correlated same-event trades: a single news
-    # release can fire trades in up to 11 instruments simultaneously (e.g.
-    # DAX/NAS100/SP500/UK100/FRA40/EU50/... all reacting to the same USD
-    # print). Giving each the FULL per-trade risk overstates real exposure
-    # in both directions -- confirmed: worst month was -98.26% (an FTMO
-    # account-ending month) and best was +2322%, both driven by clustered
-    # correlated trades, not genuine independent edge. A real trader can't
-    # take the same bet 11 times over at full size -- the risk budget for
-    # an event is shared across however many instruments react to it.
-    cluster_size = df.groupby('event_time')['symbol'].transform('count')
-    df['risk_frac_pct'] = RISK_PCT / cluster_size
+    # Monthly P&L: NOT compounded trade-to-trade within the month (many
+    # trades fire within the same minute -- correlated indices reacting to
+    # one shared news event -- so sequential re-sizing off a continuously
+    # updated balance is unrealistic and mathematically explosive, confirmed
+    # earlier). Risk is also split across correlated same-event trades: a
+    # single release can fire trades in up to 11+ instruments simultaneously,
+    # and giving each the FULL per-trade risk overstates real exposure in
+    # both directions (confirmed: pre-fix worst month was -98.26%, an
+    # FTMO-account-ending month, and best was +2322%, both from clustering
+    # not genuine edge).
+    cluster_size = sub_df.groupby('event_time')['symbol'].transform('count')
+    risk_frac_pct = RISK_PCT / cluster_size
 
-    print(f'\n{"#"*90}')
-    print(f'  MONTHLY P&L (each month fresh from £70,000, {RISK_PCT}% risk PER EVENT split across')
-    print(f'  however many correlated instruments react to it, additive not compounded)')
-    print(f'{"#"*90}')
+    print(f'\n  MONTHLY P&L (each month fresh from £{START_BAL:,.0f}, {RISK_PCT}% risk PER EVENT split')
+    print(f'  across however many correlated instruments react to it, additive not compounded)')
     rows = []
-    for period, g in df.groupby('period'):
-        pnl = START_BAL * (g['r_net'] * g['risk_frac_pct'] / 100.0).sum()
+    for period, g in sub_df.groupby(periods):
+        rf = risk_frac_pct.loc[g.index]
+        pnl = START_BAL * (g['r_net'] * rf / 100.0).sum()
         rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
     monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
     print(f'  Months with activity: {len(monthly)}')
@@ -347,5 +351,19 @@ if len(df) > 0:
     print(f'  Mean month:   £{monthly["pnl_gbp"].mean():>+9,.0f}  ({monthly["pnl_pct"].mean():+.2f}%)')
     pct_profitable = (monthly['pnl_gbp'] > 0).mean() * 100
     print(f'  Profitable months: {pct_profitable:.1f}% ({(monthly["pnl_gbp"]>0).sum()}/{len(monthly)})')
+
+
+if len(df) > 0:
+    biggest = df.reindex(df['r_net'].abs().sort_values(ascending=False).index).head(10)
+    print('\nLargest |r_net| trades (sanity-check for data anomalies -- a legitimate\n'
+          'trade should be roughly in [-1, RR], so anything far outside that is suspect):')
+    for _, row in biggest.iterrows():
+        print(f'  {row["entry_time"]}  {row["symbol"]:<8}  r_net={row["r_net"]:>+10.3f}')
+
+    report('FULL HISTORY', df, loaded)
+
+    recent_df = df[df['entry_time'] >= RECENT_CUTOFF].reset_index(drop=True)
+    report(f'RECENT ONLY ({RECENT_CUTOFF.date()} onward -- excludes the 2019-2021 outlier era)',
+           recent_df, loaded)
 
 print('\nDone.')
