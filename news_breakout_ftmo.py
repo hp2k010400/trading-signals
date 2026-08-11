@@ -24,12 +24,13 @@ MECHANISM (pending-stop straddle, direction-agnostic):
      time-stop at MAX_HOLD_HOURS.
   5. If neither trigger hits within the watch window, no trade.
 
-CALENDAR TIMEZONE IS UNVERIFIED -- CALENDAR_UTC_OFFSET_HOURS is a
-placeholder (0) until the Natural Gas Storage sample timestamps from
-ExportHighImpactCalendar.mq5 are sanity-checked against the known
-real release time (Thursdays, 10:30am US Eastern). Getting this wrong
-would silently shift every event window, same class of bug as the
-M1 UTC+3 issue -- do not trust results here until confirmed.
+CALENDAR TIMEZONE CONFIRMED (2026-08-11): Natural Gas Storage sample
+timestamps from ExportHighImpactCalendar.mq5 (e.g. 2016.08.18 17:30
+broker time) land on Thursdays, and minus the same 3h broker offset
+used for M1 bars gives 14:30 UTC = 10:30am US Eastern (EDT) -- the
+known real release time. Calendar events use the same broker-server
+UTC+3 convention as price bars, so CALENDAR_UTC_OFFSET_HOURS matches
+BROKER_UTC_OFFSET_HOURS.
 
 Run in Codespace: python -u news_breakout_ftmo.py
 """
@@ -39,7 +40,10 @@ import os, warnings
 warnings.filterwarnings('ignore')
 
 BROKER_UTC_OFFSET_HOURS = 3     # confirmed for M1 price bars (TimeCurrent()-TimeGMT())
-CALENDAR_UTC_OFFSET_HOURS = 0   # UNVERIFIED for calendar events -- see docstring
+CALENDAR_UTC_OFFSET_HOURS = 3   # confirmed 2026-08-11: Natural Gas Storage sample times
+                                 # (e.g. 2016.08.18 17:30 broker time) minus 3h land on
+                                 # 14:30 UTC = 10:30am US Eastern (EDT), the known real
+                                 # release time -- same broker-server convention as M1 bars
 
 BREAKOUT_ATR_MULT = 0.5
 ATR_STOP_MULT = 1.0
