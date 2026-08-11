@@ -12,7 +12,9 @@ input int BarsToExport = 300000;  // MT5 will return however much M1 history it 
 void OnStart()
 {
    string symbols[] = {"GER40.cash", "US100.cash", "US500.cash", "US30.cash",
-                        "EURUSD", "GBPUSD", "USDJPY", "XAUUSD"};
+                        "EURUSD", "GBPUSD", "USDJPY", "XAUUSD",
+                        "NATGAS.cash", "UK100.cash", "AUDNZD", "AUDCAD",
+                        "AUDCHF", "USDCHF", "USDCAD"};
    int exported = 0;
 
    Print("=== NEWGOATv1 M1 Data Export ===");
