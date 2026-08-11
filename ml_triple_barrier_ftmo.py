@@ -357,9 +357,16 @@ if len(df) > 0:
     # this whole session has tried to avoid -- news_breakout_indices_ftmo.py
     # looked promising the same way and failed this exact test (PF 1.01,
     # statistically breakeven).
-    SELECTION_START = pd.Timestamp('2022-01-01', tz='UTC')
+    # This strategy trades much less often per instrument than news-breakout
+    # did (some instruments only get 10-50 trades across the WHOLE ~8-year
+    # backtest) -- a 3-year selection window with N>=60 excluded genuinely
+    # promising instruments (JP225 PF 2.47 N=50, GOLD PF 1.43 N=36, PLATINUM
+    # PF 1.57 N=45, BRENTOIL PF 3.42 N=22) purely on trade count, leaving
+    # only a single thin survivor. Use ALL data before the holdout for
+    # selection instead, and a lower trade-count floor.
+    SELECTION_START = df['entry_time'].min()
     HOLDOUT_START = pd.Timestamp('2025-01-01', tz='UTC')
-    MIN_SELECTION_TRADES = 60
+    MIN_SELECTION_TRADES = 30
     SELECTION_PF_THRESHOLD = 1.0
 
     sel_df = df[(df['entry_time'] >= SELECTION_START) & (df['entry_time'] < HOLDOUT_START)]
