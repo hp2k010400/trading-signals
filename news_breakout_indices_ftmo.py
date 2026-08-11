@@ -84,6 +84,16 @@ def load_calendar():
         return None
     df = pd.read_csv(CALENDAR_FILE, on_bad_lines='skip')
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True) - pd.Timedelta(hours=CALENDAR_UTC_OFFSET_HOURS)
+    n_before = len(df)
+    # MT5's calendar stores multiple "revisions" of the same real-world event
+    # (preliminary/revised/final figures) as separate rows, often with the
+    # same or near-identical timestamp. Treating each as an independent trade
+    # fires the "same" event multiple times and blows up compounded monthly
+    # P&L (confirmed: one month showed +30,460%, impossible from real edge).
+    df = df.drop_duplicates(subset=['currency', 'event_name', 'time'])
+    n_after = len(df)
+    if n_after < n_before:
+        print(f'Dropped {n_before - n_after} duplicate calendar rows (same currency/event/time).')
     return df.sort_values('time').reset_index(drop=True)
 
 
