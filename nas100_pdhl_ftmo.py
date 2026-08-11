@@ -1,20 +1,20 @@
 """
 nas100_pdhl_ftmo.py
 
-Single-instrument, one-trade-per-day idea: NAS100 only. Each day,
-whichever of YESTERDAY's high or low gets broken first, take that
-breakout direction -- only the first signal of the day, ignore
-anything after (even if price reverses and breaks the other level
-later the same day).
+Single-instrument idea: NAS100 only. Each day, watch for price
+breaking YESTERDAY's high or low -- not limited to one trade per day,
+every qualifying H1 bar in the watch window fires its own trade (same
+no-overlap-restriction philosophy used everywhere else tonight), so
+it can take multiple positions in a day if price breaks out, pulls
+back through, and breaks out again.
 
 MECHANISM:
   1. Reference levels = yesterday's high and low (H1 bars).
-  2. Watch today's H1 bars during PDHL_WATCH_HOURS for the first
-     close beyond either level.
+  2. Watch today's H1 bars during PDHL_WATCH_HOURS; every bar whose
+     close is beyond either level fires a trade.
   3. Entry at the next H1 bar's open. Stop = ATR_STOP_MULT x ATR(14).
      Target = stop distance x RR.
   4. Time-stop at MAX_HOLD_HOURS if neither hit.
-  5. Only the FIRST qualifying breakout each day is taken.
 
 Same locked walk-forward discipline, real spread costs, confirmed
 UTC+3 broker offset correction from the start.
@@ -86,47 +86,51 @@ def find_trades():
         if len(watch_bars) == 0:
             continue
 
-        direction = 0
-        breakout_time = None
-        atr_at_signal = None
+        # NOT limited to one trade per day -- every qualifying H1 bar in the
+        # watch window fires its own trade, same "no overlap restriction"
+        # philosophy used across every other strategy tonight
         for t, row in watch_bars.iterrows():
+            direction = 0
             if row['close'] > pd_high:
-                direction = 1; breakout_time = t; atr_at_signal = row['atr14']; break
+                direction = 1
             elif row['close'] < pd_low:
-                direction = -1; breakout_time = t; atr_at_signal = row['atr14']; break
-        if direction == 0 or pd.isna(atr_at_signal) or atr_at_signal <= 0:
-            continue
+                direction = -1
+            if direction == 0:
+                continue
+            atr_at_signal = row['atr14']
+            if pd.isna(atr_at_signal) or atr_at_signal <= 0:
+                continue
 
-        entry_time = breakout_time + pd.Timedelta(hours=1)
-        entry_m1_idx = m1_index.searchsorted(entry_time)
-        if entry_m1_idx >= len(m1) - 1:
-            continue
-        entry_price = float(m1['open'].iloc[entry_m1_idx])
-        stop_dist = ATR_STOP_MULT * atr_at_signal
-        stop_price = entry_price - stop_dist if direction == 1 else entry_price + stop_dist
-        tp_price = entry_price + stop_dist * RR if direction == 1 else entry_price - stop_dist * RR
+            entry_time = t + pd.Timedelta(hours=1)
+            entry_m1_idx = m1_index.searchsorted(entry_time)
+            if entry_m1_idx >= len(m1) - 1:
+                continue
+            entry_price = float(m1['open'].iloc[entry_m1_idx])
+            stop_dist = ATR_STOP_MULT * atr_at_signal
+            stop_price = entry_price - stop_dist if direction == 1 else entry_price + stop_dist
+            tp_price = entry_price + stop_dist * RR if direction == 1 else entry_price - stop_dist * RR
 
-        window_end_time = entry_time + pd.Timedelta(hours=MAX_HOLD_HOURS)
-        window_end_idx = m1_index.searchsorted(window_end_time)
-        future = m1.iloc[entry_m1_idx + 1: min(window_end_idx, len(m1))]
-        if len(future) == 0:
-            continue
-        highs = future['high'].values; lows = future['low'].values; closes = future['close'].values
-        r_gross = None
-        for k in range(len(future)):
-            if direction == 1:
-                if highs[k] >= tp_price: r_gross = RR; break
-                if lows[k] <= stop_price: r_gross = -1.0; break
-            else:
-                if lows[k] <= tp_price: r_gross = RR; break
-                if highs[k] >= stop_price: r_gross = -1.0; break
-        if r_gross is None:
-            final_close = closes[-1]
-            r_gross = ((final_close - entry_price) / stop_dist if direction == 1
-                       else (entry_price - final_close) / stop_dist)
+            window_end_time = entry_time + pd.Timedelta(hours=MAX_HOLD_HOURS)
+            window_end_idx = m1_index.searchsorted(window_end_time)
+            future = m1.iloc[entry_m1_idx + 1: min(window_end_idx, len(m1))]
+            if len(future) == 0:
+                continue
+            highs = future['high'].values; lows = future['low'].values; closes = future['close'].values
+            r_gross = None
+            for k in range(len(future)):
+                if direction == 1:
+                    if highs[k] >= tp_price: r_gross = RR; break
+                    if lows[k] <= stop_price: r_gross = -1.0; break
+                else:
+                    if lows[k] <= tp_price: r_gross = RR; break
+                    if highs[k] >= stop_price: r_gross = -1.0; break
+            if r_gross is None:
+                final_close = closes[-1]
+                r_gross = ((final_close - entry_price) / stop_dist if direction == 1
+                           else (entry_price - final_close) / stop_dist)
 
-        cost_r = COST_PT / stop_dist * COST_MULT
-        trades.append({'entry_time': m1_index[entry_m1_idx], 'r_net': r_gross - cost_r})
+            cost_r = COST_PT / stop_dist * COST_MULT
+            trades.append({'entry_time': m1_index[entry_m1_idx], 'r_net': r_gross - cost_r})
 
     return trades
 
