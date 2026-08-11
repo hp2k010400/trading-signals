@@ -36,7 +36,7 @@ Run in Codespace: python -u news_breakout_ftmo.py
 """
 import pandas as pd
 import numpy as np
-import os, warnings
+import os, gc, warnings
 warnings.filterwarnings('ignore')
 
 BROKER_UTC_OFFSET_HOURS = 3     # confirmed for M1 price bars (TimeCurrent()-TimeGMT())
@@ -91,27 +91,28 @@ CURRENCY_MAP = {
     'CHF': ['USDCHF','AUDCHF'],
 }
 
-_m1 = {}
-_h1 = {}
-
+# Instruments now span up to ~4M M1 bars each (11 years for several of the
+# lesser-traded FX crosses). Loading all 15 into memory at once was OOM-killed
+# in the Codespace, so this processes ONE instrument's price data at a time --
+# load, extract its trades, discard, move to the next -- instead of holding
+# every instrument resident simultaneously. float32 (not the pandas default
+# float64) roughly halves the per-file memory footprint too.
 
 def load_price(symbol):
     fn = FILES[symbol]
     if not os.path.exists(fn):
-        return False
-    df = pd.read_csv(fn, on_bad_lines='skip')
+        return None, None
+    df = pd.read_csv(fn, on_bad_lines='skip',
+                      dtype={'open': 'float32', 'high': 'float32', 'low': 'float32', 'close': 'float32'})
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True) - pd.Timedelta(hours=BROKER_UTC_OFFSET_HOURS)
     df = df.set_index('time').sort_index()
-    for c in ['open','high','low','close']:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
     df = df.dropna()
-    _m1[symbol] = df
     h1 = df.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
     prev_close = h1['close'].shift(1)
     tr = pd.concat([h1['high']-h1['low'], (h1['high']-prev_close).abs(), (h1['low']-prev_close).abs()], axis=1).max(axis=1)
     h1['atr'] = tr.rolling(ATR_PERIOD).mean().shift(1)   # known BEFORE this bar, no lookahead
-    _h1[symbol] = h1.dropna()
-    return True
+    h1 = h1.dropna()
+    return df, h1
 
 
 def is_gas_storage(name):
@@ -127,9 +128,7 @@ def load_calendar():
     return df.sort_values('time').reset_index(drop=True)
 
 
-def find_trade_for_event(symbol, event_time):
-    m1 = _m1[symbol]
-    h1 = _h1[symbol]
+def find_trade_for_event(symbol, m1, h1, event_time):
     m1_index = m1.index
     h1_index = h1.index
 
@@ -214,31 +213,45 @@ def print_row(label, n, wr, pf, tot, width=26):
     print(f'  {label+flag:<{width+10}}  N={n:>6}  WR={wr:>5.1f}%  PF={pf:>5.2f}  R={tot:>+9.2f}')
 
 
-print('Loading FTMO M1 price data...')
-loaded = [s for s in FILES if load_price(s)]
-print(f'Loaded {len(loaded)} instruments: {loaded}\n')
-
 cal = load_calendar()
 if cal is None:
     raise SystemExit(f'{CALENDAR_FILE} not found -- run ExportHighImpactCalendar.mq5 and upload it first.')
 print(f'Loaded {len(cal)} calendar events (High/Moderate importance + Natural Gas Storage).\n')
 
+# Pre-split the (small) calendar into a per-instrument event-time list so
+# each instrument's price data can be loaded, used, and freed in turn.
+cal_gas = cal[cal['event_name'].apply(is_gas_storage)]
+cal_macro = cal[~cal['event_name'].apply(is_gas_storage)]
+
+events_for_symbol = {s: [] for s in FILES}
+events_for_symbol['NATGAS'] = list(cal_gas['time'])
+for currency, symbols in CURRENCY_MAP.items():
+    times = list(cal_macro[cal_macro['currency'] == currency]['time'])
+    for s in symbols:
+        events_for_symbol[s].extend(times)
+
 all_trades = []
+loaded = []
 n_events_used = 0
-for _, ev in cal.iterrows():
-    if is_gas_storage(ev['event_name']):
-        targets = ['NATGAS'] if 'NATGAS' in loaded else []
-    else:
-        targets = [s for s in CURRENCY_MAP.get(ev['currency'], []) if s in loaded]
-    if not targets:
+for symbol in FILES:
+    ev_times = events_for_symbol.get(symbol, [])
+    if not ev_times or not os.path.exists(FILES[symbol]):
         continue
-    n_events_used += 1
-    for symbol in targets:
-        trade = find_trade_for_event(symbol, ev['time'])
+    print(f'Processing {symbol}: {len(ev_times)} candidate events...')
+    m1, h1 = load_price(symbol)
+    if m1 is None:
+        continue
+    loaded.append(symbol)
+    n_events_used += len(ev_times)
+    for t in ev_times:
+        trade = find_trade_for_event(symbol, m1, h1, t)
         if trade is not None:
             all_trades.append(trade)
+    del m1, h1
+    gc.collect()
 
-print(f'Calendar events matched to at least one loaded instrument: {n_events_used}')
+print(f'\nLoaded {len(loaded)} instruments: {loaded}')
+print(f'Candidate (event, instrument) pairs processed: {n_events_used}')
 
 df = pd.DataFrame(all_trades)
 if len(df) > 0:
