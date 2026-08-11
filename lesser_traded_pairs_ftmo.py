@@ -167,7 +167,9 @@ for sym_a, sym_b in PAIRS:
     print(f'  {sym_a}/{sym_b}: {len(trades)} trades')
     all_trades.extend(trades)
 
-df = pd.DataFrame(all_trades).sort_values('entry_time').reset_index(drop=True)
+df = pd.DataFrame(all_trades)
+if len(df) > 0:
+    df = df.sort_values('entry_time').reset_index(drop=True)
 print(f'\nTotal trades: {len(df)}')
 if len(df) < 80:
     print('WARNING: fewer than 80 trades -- treat every number below as unreliable.')
