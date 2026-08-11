@@ -366,4 +366,34 @@ if len(df) > 0:
     report(f'RECENT ONLY ({RECENT_CUTOFF.date()} onward -- excludes the 2019-2021 outlier era)',
            recent_df, loaded)
 
+    # Genuine out-of-sample test: pick "winning" instruments using ONLY the
+    # SELECTION window, then test that fixed selection on the HOLDOUT window
+    # it never saw. Naively eyeballing "which instruments are green in the
+    # recent numbers" and calling that the strategy is exactly the kind of
+    # curve-fitting this whole session has been trying to avoid -- this
+    # forces the selection to be blind to the data it's judged on.
+    SELECTION_START = pd.Timestamp('2022-01-01', tz='UTC')
+    HOLDOUT_START = pd.Timestamp('2025-01-01', tz='UTC')
+    MIN_SELECTION_TRADES = 200
+    SELECTION_PF_THRESHOLD = 1.0
+
+    sel_df = df[(df['entry_time'] >= SELECTION_START) & (df['entry_time'] < HOLDOUT_START)]
+    selected = []
+    print(f'\n{"="*90}')
+    print(f'  INSTRUMENT SELECTION on {SELECTION_START.date()} -> {HOLDOUT_START.date()} '
+          f'(PF >= {SELECTION_PF_THRESHOLD}, N >= {MIN_SELECTION_TRADES})')
+    print(f'{"="*90}')
+    for symbol in loaded:
+        rv = sel_df[sel_df['symbol'] == symbol]['r_net'].values
+        n2, wr2, pf2, tot2 = compute_stats(rv)
+        keep = n2 >= MIN_SELECTION_TRADES and pf2 >= SELECTION_PF_THRESHOLD
+        if keep:
+            selected.append(symbol)
+        print_row(f'  {symbol}{" [SELECTED]" if keep else ""}', n2, wr2, pf2, tot2)
+    print(f'\n  Selected {len(selected)} instruments: {selected}')
+
+    holdout_df = df[(df['entry_time'] >= HOLDOUT_START) & (df['symbol'].isin(selected))].reset_index(drop=True)
+    report(f'BLIND HOLDOUT ({HOLDOUT_START.date()} onward, selected instruments only, '
+           f'never seen during selection)', holdout_df, selected)
+
 print('\nDone.')
