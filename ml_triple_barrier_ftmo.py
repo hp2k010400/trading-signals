@@ -291,21 +291,30 @@ print(f'\nTotal trades: {len(df)}')
 if len(df) < 80:
     print('WARNING: fewer than 80 trades -- treat every number below as unreliable.')
 
-n, wr, pf, tot = compute_stats(df['r_net'].values) if len(df) else (0,0,0,0)
-print_row('OVERALL', n, wr, pf, tot)
+df['period'] = df['entry_time'].dt.to_period('M') if len(df) else None
 
-if len(df) > 0:
-    loaded = sorted(df['symbol'].unique())
-    print(f'\n{"#"*90}')
-    print(f'  WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
-    print(f'{"#"*90}')
-    df['period'] = df['entry_time'].dt.to_period('M')
-    all_periods = sorted(df['period'].unique())
+
+def report(label, sub_df, instruments):
+    print(f'\n{"="*90}')
+    print(f'  {label}  (N={len(sub_df)})')
+    print(f'{"="*90}')
+    if len(sub_df) == 0:
+        print('  No trades in this period.')
+        return
+    if len(sub_df) < 80:
+        print('  WARNING: fewer than 80 trades -- treat every number below as unreliable.')
+
+    n, wr, pf, tot = compute_stats(sub_df['r_net'].values)
+    print_row('OVERALL', n, wr, pf, tot)
+
+    print(f'\n  WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
+    periods = sub_df['entry_time'].dt.to_period('M')
+    all_periods = sorted(periods.unique())
     n_losing = 0
     n_total = 0
     for i in range(0, len(all_periods), WALK_FORWARD_MONTHS):
         window_periods = all_periods[i:i+WALK_FORWARD_MONTHS]
-        window_rv = df[df['period'].isin(window_periods)]['r_net'].values
+        window_rv = sub_df[periods.isin(window_periods)]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(window_rv)
         n_total += 1
         if tot2 < 0:
@@ -315,17 +324,15 @@ if len(df) > 0:
     print(f'\n  Losing windows: {n_losing}/{n_total}')
 
     print(f'\n  Per-instrument:')
-    for symbol in loaded:
-        rv = df[df['symbol'] == symbol]['r_net'].values
+    for symbol in instruments:
+        rv = sub_df[sub_df['symbol'] == symbol]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(rv)
         print_row(f'  {symbol}', n2, wr2, pf2, tot2)
 
-    print(f'\n{"#"*90}')
-    print(f'  MONTHLY P&L (each month fresh from £{START_BAL:,.0f}, {RISK_PCT}% risk per trade, additive)')
-    print(f'{"#"*90}')
+    print(f'\n  MONTHLY P&L (each month fresh from £{START_BAL:,.0f}, {RISK_PCT}% risk per trade, additive)')
     rpt = RISK_PCT / 100.0
     rows = []
-    for period, g in df.groupby('period'):
+    for period, g in sub_df.groupby(periods):
         pnl = START_BAL * rpt * g['r_net'].sum()
         rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
     monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
@@ -336,5 +343,42 @@ if len(df) > 0:
     print(f'  Mean month:   £{monthly["pnl_gbp"].mean():>+9,.0f}  ({monthly["pnl_pct"].mean():+.2f}%)')
     pct_profitable = (monthly['pnl_gbp'] > 0).mean() * 100
     print(f'  Profitable months: {pct_profitable:.1f}% ({(monthly["pnl_gbp"]>0).sum()}/{len(monthly)})')
+
+
+if len(df) > 0:
+    loaded = sorted(df['symbol'].unique())
+    report('FULL HISTORY', df, loaded)
+
+    # Genuine out-of-sample test: pick "winning" instruments (metals/oil/a
+    # few indices looked strong in the full-period per-instrument numbers)
+    # using ONLY the SELECTION window, then test that fixed selection on
+    # the HOLDOUT window it never saw. Eyeballing "which instruments look
+    # green" and calling that the strategy is exactly the curve-fitting
+    # this whole session has tried to avoid -- news_breakout_indices_ftmo.py
+    # looked promising the same way and failed this exact test (PF 1.01,
+    # statistically breakeven).
+    SELECTION_START = pd.Timestamp('2022-01-01', tz='UTC')
+    HOLDOUT_START = pd.Timestamp('2025-01-01', tz='UTC')
+    MIN_SELECTION_TRADES = 60
+    SELECTION_PF_THRESHOLD = 1.0
+
+    sel_df = df[(df['entry_time'] >= SELECTION_START) & (df['entry_time'] < HOLDOUT_START)]
+    selected = []
+    print(f'\n{"="*90}')
+    print(f'  INSTRUMENT SELECTION on {SELECTION_START.date()} -> {HOLDOUT_START.date()} '
+          f'(PF >= {SELECTION_PF_THRESHOLD}, N >= {MIN_SELECTION_TRADES})')
+    print(f'{"="*90}')
+    for symbol in loaded:
+        rv = sel_df[sel_df['symbol'] == symbol]['r_net'].values
+        n2, wr2, pf2, tot2 = compute_stats(rv)
+        keep = n2 >= MIN_SELECTION_TRADES and pf2 >= SELECTION_PF_THRESHOLD
+        if keep:
+            selected.append(symbol)
+        print_row(f'  {symbol}{" [SELECTED]" if keep else ""}', n2, wr2, pf2, tot2)
+    print(f'\n  Selected {len(selected)} instruments: {selected}')
+
+    holdout_df = df[(df['entry_time'] >= HOLDOUT_START) & (df['symbol'].isin(selected))].reset_index(drop=True)
+    report(f'BLIND HOLDOUT ({HOLDOUT_START.date()} onward, selected instruments only, '
+           f'never seen during selection)', holdout_df, selected)
 
 print('\nDone.')
