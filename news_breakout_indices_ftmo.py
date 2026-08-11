@@ -47,14 +47,28 @@ FILES = {
     'US30':  'US30_M1_ftmo.csv',
     'UK100': 'UK100_cash_M1_ftmo.csv',
     'NATGAS':'NATGAS_cash_M1_ftmo.csv',
+    'FRA40': 'FRA40_M1_ftmo.csv',
+    'JP225': 'JP225_M1_ftmo.csv',
+    'AUS200':'AUS200_M1_ftmo.csv',
+    'EU50':  'EU50_M1_ftmo.csv',
+    'US2000':'US2000_M1_ftmo.csv',
+    'HK50':  'HK50_M1_ftmo.csv',
 }
 COST_POINTS = {
     'DAX':1.33, 'NAS100':1.5, 'SP500':0.6, 'US30':2.0, 'UK100':1.8, 'NATGAS':0.008,
+    # UNCALIBRATED ESTIMATES -- same caveat as the lesser-traded FX crosses,
+    # never pulled real spreads from live Market Watch for these 6
+    'FRA40':1.5, 'JP225':8.0, 'AUS200':2.0, 'EU50':1.2, 'US2000':0.4, 'HK50':10.0,
 }
+# US macro news moves global equities regardless of which country they're
+# listed in (real, well-established mechanism, not a stretch) -- so every
+# index reacts to USD releases in addition to its own home currency's.
 CURRENCY_MAP = {
-    'USD': ['NAS100','SP500','US30'],
-    'EUR': ['DAX'],
+    'USD': ['NAS100','SP500','US30','US2000','DAX','UK100','FRA40','EU50','JP225','AUS200','HK50'],
+    'EUR': ['DAX','FRA40','EU50'],
     'GBP': ['UK100'],
+    'JPY': ['JP225'],
+    'AUD': ['AUS200'],
 }
 
 def load_price(symbol):
