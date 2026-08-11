@@ -37,6 +37,7 @@ WATCH_MINUTES = 30
 MAX_HOLD_HOURS = 4
 ATR_PERIOD = 14
 WALK_FORWARD_MONTHS = 6
+MIN_STOP_DIST_PCT = 0.0005   # stop distance must be >= 0.05% of price, else skip (degenerate ATR guard)
 
 CALENDAR_FILE = 'HighImpactCalendar.csv'
 
@@ -153,6 +154,12 @@ def find_trade_for_event(symbol, m1, h1, event_time):
         return None
 
     stop_dist = ATR_STOP_MULT * atr
+    # Guard against a near-zero ATR (data gap / illiquid bar / bad tick)
+    # producing a degenerate stop distance -- dividing cost or the fallback
+    # R calc by something tiny blows up into an absurd trade. Require the
+    # stop to be at least a meaningful fraction of price.
+    if stop_dist < ref_price * MIN_STOP_DIST_PCT:
+        return None
     stop_price = entry_price - stop_dist if direction == 1 else entry_price + stop_dist
     tp_price = entry_price + stop_dist * RR if direction == 1 else entry_price - stop_dist * RR
 
@@ -172,6 +179,13 @@ def find_trade_for_event(symbol, m1, h1, event_time):
             final_close = fc[-1]
             r_gross = ((final_close - entry_price) / stop_dist if direction == 1
                        else (entry_price - final_close) / stop_dist)
+            # A trade that never touched stop or target intrabar (checked
+            # every bar's high/low above) should, by definition, resolve
+            # within roughly [-1, RR]. Anything further out can only come
+            # from a corrupted/inconsistent OHLC row (close far from that
+            # bar's own high/low) -- clip rather than let a single bad row
+            # blow up the whole backtest.
+            r_gross = max(-2.0, min(RR + 0.5, r_gross))
     else:
         r_gross = -1.0
 
@@ -238,6 +252,13 @@ if len(df) > 0:
 print(f'Total trades: {len(df)}')
 if len(df) < 80:
     print('WARNING: fewer than 80 trades -- treat every number below as unreliable.')
+
+if len(df) > 0:
+    biggest = df.reindex(df['r_net'].abs().sort_values(ascending=False).index).head(10)
+    print('\nLargest |r_net| trades (sanity-check for data anomalies -- a legitimate\n'
+          'trade should be roughly in [-1, RR], so anything far outside that is suspect):')
+    for _, row in biggest.iterrows():
+        print(f'  {row["entry_time"]}  {row["symbol"]:<8}  r_net={row["r_net"]:>+10.3f}')
 
 n, wr, pf, tot = compute_stats(df['r_net'].values) if len(df) else (0,0,0,0)
 print_row('OVERALL', n, wr, pf, tot)
