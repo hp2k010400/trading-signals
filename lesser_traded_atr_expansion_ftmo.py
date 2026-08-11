@@ -30,7 +30,7 @@ Run in Codespace: python -u lesser_traded_atr_expansion_ftmo.py
 """
 import pandas as pd
 import numpy as np
-import os, warnings
+import os, gc, warnings
 warnings.filterwarnings('ignore')
 
 ATR_PERIOD = 14
@@ -57,20 +57,20 @@ COST_POINTS = {
     'AUDCHF': 0.0004, 'USDCHF': 0.00015, 'USDCAD': 0.00015,
 }
 
-_m1 = {}
-_h1 = {}
+# Loads/processes ONE instrument's price data at a time, then discards it --
+# these 7 instruments now span up to 11 years of real M1 depth (4M+ bars
+# each for several), and loading all of them into memory simultaneously via
+# a dict OOM-killed the equivalent news-breakout script earlier tonight.
 
 def load(symbol):
     fn = FILES[symbol]
     if not os.path.exists(fn):
-        return False
-    df = pd.read_csv(fn, on_bad_lines='skip')
+        return None, None
+    df = pd.read_csv(fn, on_bad_lines='skip',
+                      dtype={'open': 'float32', 'high': 'float32', 'low': 'float32', 'close': 'float32'})
     df['time'] = pd.to_datetime(df['time'], unit='s', utc=True) - pd.Timedelta(hours=BROKER_UTC_OFFSET_HOURS)
     df = df.set_index('time').sort_index()
-    for c in ['open','high','low','close']:
-        df[c] = pd.to_numeric(df[c], errors='coerce')
     df = df.dropna()
-    _m1[symbol] = df
     h1 = df.resample('1h').agg({'open':'first','high':'max','low':'min','close':'last'}).dropna()
     h1['prev_close'] = h1['close'].shift(1)
     tr = pd.concat([
@@ -80,8 +80,8 @@ def load(symbol):
     ], axis=1).max(axis=1)
     h1['tr'] = tr
     h1['atr'] = tr.rolling(ATR_PERIOD).mean().shift(1)   # shifted: ATR known BEFORE this bar, no lookahead
-    _h1[symbol] = h1.dropna()
-    return True
+    h1 = h1.dropna()
+    return df, h1
 
 
 def is_power_hour(hour_utc):
@@ -111,9 +111,7 @@ def simulate_forward(m1, m1_index, entry_index, direction, entry_price, stop_pri
             else (entry_price - final_close) / stop_distance)
 
 
-def find_trades(symbol):
-    m1 = _m1[symbol]
-    h1 = _h1[symbol]
+def find_trades(symbol, m1, h1):
     m1_index = m1.index
     h1_index = h1.index
     trades = []
@@ -168,15 +166,21 @@ def print_row(label, n, wr, pf, tot, width=26):
     print(f'  {label+flag:<{width+10}}  N={n:>6}  WR={wr:>5.1f}%  PF={pf:>5.2f}  R={tot:>+9.2f}')
 
 
-print('Loading FTMO M1 data, building H1 + ATR...')
-loaded = [s for s in FILES if load(s)]
-print(f'Loaded {len(loaded)} instruments: {loaded}\n')
-
+print('Loading FTMO M1 data one instrument at a time, building H1 + ATR...')
 all_trades = []
-for symbol in loaded:
-    trades = find_trades(symbol)
+loaded = []
+for symbol in FILES:
+    m1, h1 = load(symbol)
+    if m1 is None:
+        continue
+    loaded.append(symbol)
+    trades = find_trades(symbol, m1, h1)
     print(f'  {symbol}: {len(trades)} trades')
     all_trades.extend(trades)
+    del m1, h1
+    gc.collect()
+
+print(f'Loaded {len(loaded)} instruments: {loaded}\n')
 
 df = pd.DataFrame(all_trades)
 print(f'\nTotal trades: {len(df)}')

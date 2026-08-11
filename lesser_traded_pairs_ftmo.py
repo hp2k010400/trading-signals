@@ -171,57 +171,52 @@ df = pd.DataFrame(all_trades)
 if len(df) > 0:
     df = df.sort_values('entry_time').reset_index(drop=True)
 print(f'\nTotal trades: {len(df)}')
-if len(df) < 80:
-    print('WARNING: fewer than 80 trades -- treat every number below as unreliable.')
 
-n, wr, pf, tot = compute_stats(df['r_net'].values) if len(df) else (0,0,0,0)
-print_row('OVERALL', n, wr, pf, tot)
 
-if len(df) > 0:
+def report(label, sub_df, pairs):
+    print(f'\n{"="*90}')
+    print(f'  {label}  (N={len(sub_df)})')
+    print(f'{"="*90}')
+    if len(sub_df) == 0:
+        print('  No trades in this period.')
+        return
+    if len(sub_df) < 80:
+        print('  WARNING: fewer than 80 trades -- treat every number below as unreliable.')
+
+    n, wr, pf, tot = compute_stats(sub_df['r_net'].values)
+    print_row('OVERALL', n, wr, pf, tot)
+
     print(f'\n  Per-pair:')
-    for sym_a, sym_b in PAIRS:
-        rv = df[df['pair'] == f'{sym_a}/{sym_b}']['r_net'].values
+    for pair in pairs:
+        rv = sub_df[sub_df['pair'] == pair]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(rv)
-        print_row(f'  {sym_a}/{sym_b}', n2, wr2, pf2, tot2)
+        print_row(f'  {pair}', n2, wr2, pf2, tot2)
 
-    # ============================================================
-    #  PART 1: WALK-FORWARD (non-overlapping windows)
-    # ============================================================
-    print(f'\n{"#"*90}')
-    print(f'  PART 1: WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
-    print(f'{"#"*90}')
-    df['period'] = df['entry_time'].dt.to_period('M')
-    all_periods = sorted(df['period'].unique())
+    print(f'\n  WALK-FORWARD VALIDATION ({WALK_FORWARD_MONTHS}-month non-overlapping windows)')
+    periods = sub_df['entry_time'].dt.to_period('M')
+    all_periods = sorted(periods.unique())
     n_losing = 0
     n_total = 0
     for i in range(0, len(all_periods), WALK_FORWARD_MONTHS):
         window_periods = all_periods[i:i+WALK_FORWARD_MONTHS]
-        label_suffix = ' (partial window)' if len(window_periods) < WALK_FORWARD_MONTHS else ''
-        window_rv = df[df['period'].isin(window_periods)]['r_net'].values
+        window_rv = sub_df[periods.isin(window_periods)]['r_net'].values
         n2, wr2, pf2, tot2 = compute_stats(window_rv)
         n_total += 1
         if tot2 < 0:
             n_losing += 1
-        print(f'  {window_periods[0]} -> {window_periods[-1]}{label_suffix}   N={n2:>5}  WR={wr2:>5.1f}%  PF={pf2:>5.2f}'
+        print(f'  {window_periods[0]} -> {window_periods[-1]}   N={n2:>5}  WR={wr2:>5.1f}%  PF={pf2:>5.2f}'
               + (' <- LOSING' if tot2 < 0 else ''))
     print(f'\n  Losing windows: {n_losing}/{n_total}')
 
-    # ============================================================
-    #  PART 2: REAL MONTHLY P&L (each month fresh from £70,000, 0.30% risk)
-    # ============================================================
-    print(f'\n{"#"*90}')
-    print(f'  PART 2: MONTHLY P&L (each month simulated fresh from £70,000 at {RISK_PCT}% risk)')
-    print(f'{"#"*90}')
+    print(f'\n  MONTHLY P&L (each month fresh from £{START_BAL:,.0f} at {RISK_PCT}% risk)')
     rpt = RISK_PCT / 100.0
     rows = []
-    for period, g in df.groupby('period'):
+    for period, g in sub_df.groupby(periods):
         equity = START_BAL
         for r in g.sort_values('entry_time')['r_net']:
             equity += equity * rpt * r
         pnl = equity - START_BAL
-        pnl_pct = pnl / START_BAL * 100
-        rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl_pct})
-
+        rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
     monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
     print(f'  Months with activity: {len(monthly)}')
     print(f'  Best month:   {monthly.loc[monthly["pnl_gbp"].idxmax(), "month"]}  £{monthly["pnl_gbp"].max():>+9,.0f}  ({monthly["pnl_pct"].max():+.2f}%)')
@@ -231,8 +226,38 @@ if len(df) > 0:
     pct_profitable = (monthly['pnl_gbp'] > 0).mean() * 100
     print(f'  Profitable months: {pct_profitable:.1f}% ({(monthly["pnl_gbp"]>0).sum()}/{len(monthly)})')
 
-    print(f'\n  Full month-by-month:')
-    for _, r in monthly.iterrows():
-        print(f'    {r["month"]}  £{r["pnl_gbp"]:>+9,.0f}  {r["pnl_pct"]:>+6.2f}%  N={r["trades"]:.0f}')
+
+if len(df) > 0:
+    all_pairs = sorted(df['pair'].unique())
+    report('FULL HISTORY', df, all_pairs)
+
+    # Genuine out-of-sample test: 2 of 4 pairs (AUDCAD/AUDCHF, USDCHF/USDCAD)
+    # carried nearly the entire full-history result -- eyeballing "these 2
+    # look great" and calling that the strategy is exactly the curve-fitting
+    # this whole session has tried to avoid. news_breakout_indices_ftmo.py
+    # and ml_triple_barrier_ftmo.py both looked this good in aggregate and
+    # came back near-breakeven under this exact test.
+    HOLDOUT_START = pd.Timestamp('2025-01-01', tz='UTC')
+    MIN_SELECTION_TRADES = 20
+    SELECTION_PF_THRESHOLD = 1.0
+
+    sel_df = df[df['entry_time'] < HOLDOUT_START]
+    selected = []
+    print(f'\n{"="*90}')
+    print(f'  PAIR SELECTION on data before {HOLDOUT_START.date()} '
+          f'(PF >= {SELECTION_PF_THRESHOLD}, N >= {MIN_SELECTION_TRADES})')
+    print(f'{"="*90}')
+    for pair in all_pairs:
+        rv = sel_df[sel_df['pair'] == pair]['r_net'].values
+        n2, wr2, pf2, tot2 = compute_stats(rv)
+        keep = n2 >= MIN_SELECTION_TRADES and pf2 >= SELECTION_PF_THRESHOLD
+        if keep:
+            selected.append(pair)
+        print_row(f'  {pair}{" [SELECTED]" if keep else ""}', n2, wr2, pf2, tot2)
+    print(f'\n  Selected {len(selected)} pairs: {selected}')
+
+    holdout_df = df[(df['entry_time'] >= HOLDOUT_START) & (df['pair'].isin(selected))].reset_index(drop=True)
+    report(f'BLIND HOLDOUT ({HOLDOUT_START.date()} onward, selected pairs only, '
+           f'never seen during selection)', holdout_df, selected)
 
 print('\nDone.')
