@@ -34,12 +34,12 @@ warnings.filterwarnings('ignore')
 MAX_HOLD_MIN = 240
 
 FILES = {
-    'DAX':   'GER40_M1_oanda.csv',
-    'NAS100':'US100_M1_oanda.csv',
-    'SP500': 'US500_M1_oanda.csv',
-    'US30':  'US30_M1_oanda.csv',
-    'USDJPY':'USDJPY_M1_oanda.csv',
-    'GOLD':  'XAUUSD_M1_oanda.csv',
+    'DAX':   'GER40_M1_ftmo.csv',
+    'NAS100':'US100_M1_ftmo.csv',
+    'SP500': 'US500_M1_ftmo.csv',
+    'US30':  'US30_M1_ftmo.csv',
+    'USDJPY':'USDJPY_M1_ftmo.csv',
+    'GOLD':  'XAUUSD_M1_ftmo.csv',
 }
 
 _m1 = {}
