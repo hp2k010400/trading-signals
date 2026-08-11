@@ -42,16 +42,16 @@ void OnStart()
    Print("Total historical calendar values fetched: ", count);
    if(count <= 0) { Print("ERROR: no calendar history returned."); return; }
 
-   // Pass 1: resolve each unique event_id once -> name, importance, currency
-   long   seenIds[];      int nSeen = 0;      ArrayResize(seenIds, count);
-   long   idList[];       string nameList[];  int impList[];   string currList[];
+   // Pass 1: resolve each unique event_id once -> name, importance, currency, digits
+   ulong  seenIds[];      int nSeen = 0;      ArrayResize(seenIds, count);
+   ulong  idList[];       string nameList[];  int impList[];   string currList[];  int digitsList[];
    int nEvents = 0;
    ArrayResize(idList, count); ArrayResize(nameList, count);
-   ArrayResize(impList, count); ArrayResize(currList, count);
+   ArrayResize(impList, count); ArrayResize(currList, count); ArrayResize(digitsList, count);
 
    for(int i = 0; i < count; i++)
    {
-      long eid = values[i].event_id;
+      ulong eid = values[i].event_id;
       bool already = false;
       for(int s = 0; s < nSeen; s++) if(seenIds[s] == eid) { already = true; break; }
       if(already) continue;
@@ -72,6 +72,7 @@ void OnStart()
       nameList[nEvents] = ev.name;
       impList[nEvents] = (int)ev.importance;
       currList[nEvents] = currency;
+      digitsList[nEvents] = (int)ev.digits;
       nEvents++;
    }
 
@@ -91,9 +92,10 @@ void OnStart()
       for(int e = 0; e < nEvents; e++) if(idList[e] == values[i].event_id) { idx = e; break; }
       if(idx < 0) continue;
 
-      double actual   = (values[i].actual_value   == LONG_MIN) ? 0 : (double)values[i].actual_value   / MathPow(10, values[i].event_value_digits);
-      double forecast = (values[i].forecast_value == LONG_MIN) ? 0 : (double)values[i].forecast_value / MathPow(10, values[i].event_value_digits);
-      double previous = (values[i].prev_value     == LONG_MIN) ? 0 : (double)values[i].prev_value     / MathPow(10, values[i].event_value_digits);
+      int dig = digitsList[idx];
+      double actual   = (values[i].actual_value   == LONG_MIN) ? 0 : (double)values[i].actual_value   / MathPow(10, dig);
+      double forecast = (values[i].forecast_value == LONG_MIN) ? 0 : (double)values[i].forecast_value / MathPow(10, dig);
+      double previous = (values[i].prev_value     == LONG_MIN) ? 0 : (double)values[i].prev_value     / MathPow(10, dig);
 
       FileWrite(fh, (long)values[i].time, currList[idx], nameList[idx], impList[idx], actual, forecast, previous);
       written++;
