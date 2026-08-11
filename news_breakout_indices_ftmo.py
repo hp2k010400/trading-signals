@@ -288,17 +288,24 @@ if len(df) > 0:
         n2, wr2, pf2, tot2 = compute_stats(rv)
         print_row(f'  {symbol}', n2, wr2, pf2, tot2)
 
-    # Real monthly P&L, each month fresh from £70,000 at 0.30% risk
+    # Real monthly P&L, each month fresh from £70,000 at 0.30% risk.
+    # NOT compounded trade-to-trade within the month: many of these trades
+    # fire within the same minute (multiple correlated indices reacting to
+    # one shared news event), so sequentially re-sizing risk off a
+    # continuously-updated equity figure implies re-pricing risk in real
+    # time across a dozen simultaneous correlated positions -- unrealistic,
+    # and mathematically explosive (confirmed: produced a "best month" of
+    # +£809 TRILLION on synthetic-scale trade clustering). Each trade is
+    # instead sized off the SAME fixed monthly-starting balance and summed
+    # additively -- still real money, just not fantasy compounding.
     print(f'\n{"#"*90}')
-    print(f'  MONTHLY P&L (each month simulated fresh from £70,000 at {RISK_PCT}% risk)')
+    print(f'  MONTHLY P&L (each month simulated fresh from £70,000 at {RISK_PCT}% risk, additive not compounded)')
     print(f'{"#"*90}')
     rpt = RISK_PCT / 100.0
     rows = []
     for period, g in df.groupby('period'):
-        equity = START_BAL
-        for r in g.sort_values('entry_time')['r_net']:
-            equity += equity * rpt * r
-        pnl = equity - START_BAL
+        total_r = g['r_net'].sum()
+        pnl = START_BAL * rpt * total_r
         rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
     monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
     print(f'  Months with activity: {len(monthly)}')
