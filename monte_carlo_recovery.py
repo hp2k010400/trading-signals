@@ -28,7 +28,7 @@ DAILY_LOSS_LIMIT = 3_500.0
 
 WIN_RATE         = 0.44
 TP_R             = 3.0
-RISK_PCT         = 0.005
+RISK_PCT         = 0.0025  # reduced to 0.25% to widen buffer
 AVG_TRADES_DAY   = 4.87
 
 N_SIMS           = 100_000

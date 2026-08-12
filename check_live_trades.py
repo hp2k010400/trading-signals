@@ -29,18 +29,23 @@ warnings.filterwarnings('ignore')
 # the script will tell you if there's a time offset issue.
 
 LIVE_TRADES = [
-    # MT5 shows UTC+3 (OANDA FTMO server). All times below are converted to UTC (-3h).
-    # ---- CLOSED TRADES ----
-    {'sym': 'EURUSD',  'open_time': '2026-07-23 10:08', 'dir': -1, 'price': 1.14094},   # sell, closed +1376
-    {'sym': 'GOLD',    'open_time': '2026-07-23 17:40', 'dir': -1, 'price': 4042.16},   # xauusd sell, -347
-    {'sym': 'GOLD',    'open_time': '2026-07-24 10:04', 'dir':  1, 'price': 4060.69},   # xauusd buy, -358
-    {'sym': 'GBPUSD',  'open_time': '2026-07-24 10:21', 'dir':  1, 'price': 1.33224},   # buy, -369
-    {'sym': 'NAS100',  'open_time': '2026-07-23 16:02', 'dir':  1, 'price': 28445.88},  # us100.cash buy, -397
-    {'sym': 'GER40',   'open_time': '2026-07-23 11:08', 'dir': -1, 'price': 24941.96},  # ger40.cash sell, -360
-    {'sym': 'NATGAS',  'open_time': '2026-07-24 14:30', 'dir':  1, 'price': 2.999},     # natgas buy, -501
-    # ---- STILL OPEN ----
-    {'sym': 'EURUSD',  'open_time': '2026-07-23 15:41', 'dir':  1, 'price': 1.13762},   # buy, open
-    {'sym': 'SP500',   'open_time': '2026-07-23 16:09', 'dir':  1, 'price': 7408.85},   # us500.cash buy, open
+    # MT5 shows UTC+3 (OANDA FTMO server). All times below converted to UTC (-3h).
+    # ---- ALL CLOSED TRADES (Jul 23 – Jul 28) ----
+    {'sym': 'EURUSD',  'open_time': '2026-07-23 10:08', 'dir': -1, 'price': 1.14094},   # +1376 WIN
+    {'sym': 'GOLD',    'open_time': '2026-07-23 17:40', 'dir': -1, 'price': 4042.16},   # -347
+    {'sym': 'EURUSD',  'open_time': '2026-07-23 15:41', 'dir':  1, 'price': 1.13762},   # -365 (time stopped)
+    {'sym': 'NAS100',  'open_time': '2026-07-23 16:02', 'dir':  1, 'price': 28445.88},  # -397
+    {'sym': 'SP500',   'open_time': '2026-07-23 16:09', 'dir':  1, 'price': 7408.85},   # +6 (time stopped)
+    {'sym': 'GOLD',    'open_time': '2026-07-24 10:04', 'dir':  1, 'price': 4060.69},   # -358
+    {'sym': 'GBPUSD',  'open_time': '2026-07-24 10:21', 'dir':  1, 'price': 1.33224},   # -369
+    {'sym': 'GER40',   'open_time': '2026-07-24 11:08', 'dir': -1, 'price': 24941.96},  # -360  (NOTE: Jul 24 not Jul 23)
+    {'sym': 'NATGAS',  'open_time': '2026-07-24 14:30', 'dir':  1, 'price': 2.999},     # -501
+    {'sym': 'GBPUSD',  'open_time': '2026-07-27 14:00', 'dir': -1, 'price': 1.33075},   # +191 (time stopped)
+    {'sym': 'GOLD',    'open_time': '2026-07-27 15:16', 'dir':  1, 'price': 4079.06},   # -343
+    {'sym': 'NATGAS',  'open_time': '2026-07-27 16:00', 'dir':  1, 'price': 2.832},     # -530
+    {'sym': 'USDJPY',  'open_time': '2026-07-27 17:42', 'dir':  1, 'price': 163.725},   # +421 (time stopped)
+    {'sym': 'EURUSD',  'open_time': '2026-07-28 09:00', 'dir':  1, 'price': 1.13729},   # -367
+    {'sym': 'GER40',   'open_time': '2026-07-28 09:19', 'dir':  1, 'price': 25514.87},  # -341
 ]
 
 # ─── Strategy parameters (must match EA) ─────────────────────────────────────
