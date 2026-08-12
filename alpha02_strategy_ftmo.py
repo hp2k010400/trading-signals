@@ -17,8 +17,19 @@ RULE (fixed, not tuned):
 
 Reports GROSS (no cost) and NET (real cost, 1.5x-stressed base, then
 +20%/+50%/+100% additional stress) separately -- NET is the primary
-result. If net expectancy is non-positive, this gets rejected, not
-rescued with filters.
+result.
+
+Also includes Phase 10's permutation test: for each instrument, in
+addition to the real event-anchored trades, generates N_PERMUTATIONS
+sets of trades anchored at RANDOM times (same count, same 24h window,
+same real price data) -- this tests whether there's something special
+about PRE-EVENT windows specifically, or whether any random 24h window
+would show similar performance (which would mean the finding is just
+general market drift, not an event-specific phenomenon). And a cluster
+-risk-sized monthly P&L (many mapped instruments react to the same
+calendar event simultaneously; giving each independent full risk
+double-counts correlated exposure -- same fix applied to
+news_breakout_ftmo.py earlier in this research programme).
 
 Run in Codespace: python -u alpha02_strategy_ftmo.py
 """
@@ -36,6 +47,7 @@ COST_STRESS_LEVELS = [1.0, 1.2, 1.5, 2.0]   # multipliers ON TOP of BASE_COST_MU
 RISK_PCT = 0.30
 START_BAL = 70000.0
 CALENDAR_FILE = 'HighImpactCalendar.csv'
+N_PERMUTATIONS = 100
 
 FILES = {
     'DAX':   'GER40_M1_ftmo.csv',
@@ -101,8 +113,11 @@ for currency, symbols in CURRENCY_MAP.items():
     for s in symbols:
         events_for_symbol[s].extend(times)
 
+rng = np.random.default_rng(42)
 all_trades = []
 loaded = []
+null_r_by_perm = [[] for _ in range(N_PERMUTATIONS)]
+
 for symbol in FILES:
     ev_times = events_for_symbol.get(symbol, [])
     if not ev_times or not os.path.exists(FILES[symbol]):
@@ -115,6 +130,7 @@ for symbol in FILES:
     idx = m1.index
     vol_idx = vol20.index
 
+    # ---- REAL, event-anchored trades ----
     for t in ev_times:
         pre_time = t - pd.Timedelta(hours=PRE_WINDOW_HOURS)
         entry_pos = idx.searchsorted(pre_time)
@@ -125,23 +141,68 @@ for symbol in FILES:
         exit_price = float(m1['close'].iloc[exit_pos - 1])
         if entry_price <= 0:
             continue
-
-        # trailing vol as of the day before the signal starts -- no lookahead
         vol_pos = vol_idx.searchsorted(pre_time.normalize()) - 1
         if vol_pos < 0 or vol_pos >= len(vol20):
             continue
         vol = vol20.iloc[vol_pos]
         if pd.isna(vol) or vol <= 0:
             continue
-        period_vol = vol * np.sqrt(1.0)   # ~1 trading day equivalent for a 24h hold
+        period_vol = vol
 
-        unsigned_log_ret = np.log(exit_price / entry_price)   # direction is always +1 (long)
+        unsigned_log_ret = np.log(exit_price / entry_price)
         r_gross = np.clip(unsigned_log_ret / period_vol, -3.0, 3.0)
         cost_return = COST_POINTS[symbol] / entry_price
-        cost_r_per_unit_mult = cost_return / period_vol   # cost in R units at COST_MULT=1.0
+        cost_r_per_unit_mult = cost_return / period_vol
 
         all_trades.append({'symbol': symbol, 'entry_time': idx[entry_pos], 'event_time': t,
                             'r_gross': r_gross, 'cost_r_unit': cost_r_per_unit_mult})
+
+    # ---- PERMUTATION: same instrument, same # of "events", RANDOM anchor times ----
+    # Vectorized (numpy) rather than a per-event Python loop, since this repeats
+    # N_PERMUTATIONS times per instrument -- otherwise far too slow.
+    idx_vals = idx.values
+    close_vals = m1['close'].values
+    vol_idx_vals = vol_idx.values
+    vol_vals = vol20.values
+    n_events = len(ev_times)
+    if n_events > 0 and len(idx_vals) > 10:
+        valid_start = idx_vals[0] + np.timedelta64(PRE_WINDOW_HOURS, 'h')
+        valid_end = idx_vals[-1]
+        span_ns = (valid_end - valid_start) / np.timedelta64(1, 'ns')
+        if span_ns > 0:
+            for p in range(N_PERMUTATIONS):
+                offsets_ns = rng.uniform(0, span_ns, size=n_events).astype('timedelta64[ns]')
+                rand_times = valid_start + offsets_ns
+                pre_times = rand_times - np.timedelta64(PRE_WINDOW_HOURS, 'h')
+
+                entry_pos = np.searchsorted(idx_vals, pre_times, side='left')
+                exit_pos = np.searchsorted(idx_vals, rand_times, side='left')
+                mask = (entry_pos > 0) & (exit_pos < len(idx_vals)) & (entry_pos < exit_pos)
+                entry_pos = entry_pos[mask]; exit_pos = exit_pos[mask]; pre_times_v = pre_times[mask]
+
+                entry_price = close_vals[entry_pos]
+                exit_price = close_vals[exit_pos - 1]
+                pmask = entry_price > 0
+                entry_pos = entry_pos[pmask]; entry_price = entry_price[pmask]
+                exit_price = exit_price[pmask]; pre_times_v = pre_times_v[pmask]
+
+                pre_days = pre_times_v.astype('datetime64[D]').astype('datetime64[ns]')
+                vol_pos = np.searchsorted(vol_idx_vals, pre_days, side='left') - 1
+                vmask = (vol_pos >= 0) & (vol_pos < len(vol_vals))
+                vol_pos = vol_pos[vmask]; entry_price = entry_price[vmask]; exit_price = exit_price[vmask]
+
+                vol = vol_vals[vol_pos]
+                v2mask = ~np.isnan(vol) & (vol > 0)
+                vol = vol[v2mask]; entry_price = entry_price[v2mask]; exit_price = exit_price[v2mask]
+                if len(vol) == 0:
+                    continue
+
+                unsigned_ret = np.log(exit_price / entry_price)
+                r_gross_null = np.clip(unsigned_ret / vol, -3.0, 3.0)
+                cost_return = COST_POINTS[symbol] / entry_price
+                cost_r_null = cost_return / vol * BASE_COST_MULT
+                null_r_by_perm[p].extend((r_gross_null - cost_r_null).tolist())
+
     del m1, vol20
     gc.collect()
 
@@ -191,10 +252,10 @@ for stress in COST_STRESS_LEVELS:
     label = f'NET (cost x{total_mult:.2f})' + (' [BASE]' if stress == 1.0 else '')
     print_stats(label, s)
 
-df['r_net'] = net_by_level[1.0]   # BASE case (1.5x, our standard) used for all further analysis
+df['r_net'] = net_by_level[1.0]
 
 # ============================================================
-# BY YEAR -- one good year, or repeated?
+# BY YEAR
 # ============================================================
 print(f'\n{"#"*100}\n  BY YEAR (net, base cost)\n{"#"*100}')
 for year in sorted(df['year'].unique()):
@@ -226,14 +287,18 @@ for symbol in loaded:
     print_stats(symbol, s)
 
 # ============================================================
-# MONTHLY P&L
+# CLUSTER-RISK-SIZED MONTHLY P&L
 # ============================================================
-print(f'\n{"#"*100}\n  MONTHLY P&L (each month fresh from £{START_BAL:,.0f}, {RISK_PCT}% risk per trade, additive, net/base cost)\n{"#"*100}')
-rpt = RISK_PCT / 100.0
+print(f'\n{"#"*100}')
+print(f'  MONTHLY P&L (each month fresh from £{START_BAL:,.0f}, {RISK_PCT}% risk PER EVENT split across')
+print(f'  however many mapped instruments react to it, net/base cost)')
+print(f'{"#"*100}')
+cluster_size = df.groupby('event_time')['symbol'].transform('count')
+df['risk_frac_pct'] = RISK_PCT / cluster_size
 periods = df['entry_time'].dt.to_period('M')
 rows = []
 for period, g in df.groupby(periods):
-    pnl = START_BAL * rpt * g['r_net'].sum()
+    pnl = START_BAL * (g['r_net'] * g['risk_frac_pct'] / 100.0).sum()
     rows.append({'month': str(period), 'trades': len(g), 'pnl_gbp': pnl, 'pnl_pct': pnl / START_BAL * 100})
 monthly = pd.DataFrame(rows).sort_values('month').reset_index(drop=True)
 trades_per_month = len(df) / max(len(monthly), 1)
@@ -244,5 +309,39 @@ print(f'  Median month: £{monthly["pnl_gbp"].median():>+9,.0f}  ({monthly["pnl_
 print(f'  Mean month:   £{monthly["pnl_gbp"].mean():>+9,.0f}  ({monthly["pnl_pct"].mean():+.2f}%)')
 pct_profitable = (monthly['pnl_gbp'] > 0).mean() * 100
 print(f'  Profitable months: {pct_profitable:.1f}% ({(monthly["pnl_gbp"]>0).sum()}/{len(monthly)})')
+
+# ============================================================
+# PHASE 10: PERMUTATION TEST
+# ============================================================
+print(f'\n{"#"*100}\n  PHASE 10: PERMUTATION TEST ({N_PERMUTATIONS} random-anchor-time shuffles)\n{"#"*100}')
+print('  Tests whether PRE-EVENT windows specifically matter, or whether any random')
+print('  24h window in the same instruments/date range would show similar performance.\n')
+
+real_pf = compute_stats(df['r_net'].values)['PF']
+real_r = compute_stats(df['r_net'].values)['R']
+null_pfs = []
+null_rs = []
+for p in range(N_PERMUTATIONS):
+    r = np.array(null_r_by_perm[p])
+    if len(r) == 0:
+        continue
+    s = compute_stats(r)
+    null_pfs.append(s['PF'])
+    null_rs.append(s['R'])
+null_pfs = np.array(null_pfs)
+null_rs = np.array(null_rs)
+
+if len(null_pfs) > 0:
+    pct_pf = (null_pfs < real_pf).mean() * 100
+    pct_r = (null_rs < real_r).mean() * 100
+    print(f'  REAL (event-anchored):  PF={real_pf}  R={real_r:+.2f}')
+    print(f'  NULL (random-anchored, N={len(null_pfs)} permutations):')
+    print(f'    Mean PF:  {null_pfs.mean():.3f}   Std PF: {null_pfs.std():.3f}')
+    print(f'    5th pct:  {np.percentile(null_pfs, 5):.3f}   95th pct: {np.percentile(null_pfs, 95):.3f}')
+    print(f'\n  REAL PF beats {pct_pf:.1f}% of random-anchor permutations.')
+    print(f'  REAL total R beats {pct_r:.1f}% of random-anchor permutations.')
+    print(f'  (>=95th percentile is conventionally "significant", p<0.05 one-sided)')
+else:
+    print('  No valid permutation samples generated.')
 
 print('\nDone.')
