@@ -99,8 +99,15 @@ def load_daily(symbol):
     del df
     daily = daily[daily['open'] > 0]
     daily['ret1'] = np.log(daily['close'] / daily['close'].shift(1))
-    daily['trail_ret'] = np.log(daily['close'] / daily['close'].shift(LOOKBACK_DAYS))
-    daily['vol20'] = daily['ret1'].rolling(VOL_LOOKBACK_DAYS).std()
+    # LOOKAHEAD FIX (audit, 2026-08-12): trail_ret/vol20 must reflect only
+    # information available BEFORE the day they're acted on. find_trades()
+    # enters at THIS row's open -- using this row's own close (via
+    # .shift(LOOKBACK_DAYS) with no further shift) to size that same day's
+    # entry is using data that doesn't exist yet at the open. Shifted by 1
+    # extra day so the signal used for day i's open reflects only data
+    # through day i-1's close.
+    daily['trail_ret'] = np.log(daily['close'] / daily['close'].shift(LOOKBACK_DAYS)).shift(1)
+    daily['vol20'] = daily['ret1'].rolling(VOL_LOOKBACK_DAYS).std().shift(1)
     return daily.dropna()
 
 

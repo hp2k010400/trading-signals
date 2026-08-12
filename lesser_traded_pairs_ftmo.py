@@ -42,6 +42,12 @@ MAX_HOLD_DAYS = 20
 WALK_FORWARD_MONTHS = 6
 RISK_PCT = 0.30
 START_BAL = 70000.0
+# AUDIT FIX (2026-08-12): every other script tonight applies a 1.5x stress
+# multiplier to real spread costs; this script never did, so its reported
+# PF was running on optimistic un-stressed costs while everything else was
+# conservative -- an inconsistency that made this look relatively better
+# than it was actually tested for.
+COST_MULT = 1.5
 
 BROKER_UTC_OFFSET_HOURS = 3   # confirmed directly against MT5 (TimeCurrent()-TimeGMT())
 
@@ -129,7 +135,7 @@ def simulate_pair(sym_a, sym_b):
             ret_a_trade = np.log(a_exit / state['a_entry'])
             ret_b_trade = np.log(b_exit / state['b_entry'])
             spread_ret = state['direction'] * (ret_a_trade - ret_b_trade)
-            cost_r = (COST_POINTS[sym_a] / state['a_entry'] + COST_POINTS[sym_b] / state['b_entry']) / state['norm']
+            cost_r = (COST_POINTS[sym_a] / state['a_entry'] + COST_POINTS[sym_b] / state['b_entry']) / state['norm'] * COST_MULT
             r_net = spread_ret / state['norm'] - cost_r
             trades.append({'entry_time': da.index[state['entry_day']], 'r_net': r_net})
             state = None
